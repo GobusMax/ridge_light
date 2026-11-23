@@ -12,6 +12,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -44,16 +45,17 @@ fun LightBar(totals: Map<Light, Double>, modifier: Modifier = Modifier.fillMaxWi
     }
 }
 
-/** Light along the route over walking time (runs in sequence). */
+/** Light over the hike's time, walking and breaks (breaks drawn lighter). */
 @Composable
 fun TimelineBar(result: SunResult, modifier: Modifier = Modifier.fillMaxWidth().height(10.dp)) {
     Canvas(modifier) {
         val d = result.duration
         if (d <= 0) return@Canvas
-        for (run in result.runs) {
+        for (run in result.timeline) {
             val x0 = (run.startSeconds / d).toFloat() * size.width
             val x1 = (run.endSeconds / d).toFloat() * size.width
-            drawRect(lightColor(run.light), Offset(x0, 0f), Size(max(1f, x1 - x0), size.height))
+            val color = lightColor(run.light).let { if (run.isBreak) it.copy(alpha = 0.5f) else it }
+            drawRect(color, Offset(x0, 0f), Size(max(1f, x1 - x0), size.height))
         }
     }
 }
@@ -104,6 +106,16 @@ fun ProfileChart(result: SunResult, cursorDistance: Double?, modifier: Modifier 
             drawLine(color, Offset(x(a.distance), y(a.elevation)), Offset(x(b.distance), y(b.elevation)), 2.5.dp.toPx(), StrokeCap.Round)
         }
         drawLine(axis.copy(alpha = 0.5f), Offset(left, bottom), Offset(right, bottom), 1.dp.toPx())
+
+        // Breaks: a ring in the colour of the light most of the break is spent in.
+        for (b in result.breaks) {
+            val node = nodes[b.stop.node]
+            if (!node.elevation.isFinite()) continue
+            val main = b.pieces.groupBy { it.sample.light }.maxBy { (_, ps) -> ps.sumOf { it.endSeconds - it.startSeconds } }.key
+            val at = Offset(x(node.distance), y(node.elevation))
+            drawCircle(lightColor(main), 6.dp.toPx(), at)
+            drawCircle(cursorColor, 6.dp.toPx(), at, style = Stroke(1.5.dp.toPx()))
+        }
 
         cursorDistance?.let { d ->
             val cx = x(d)

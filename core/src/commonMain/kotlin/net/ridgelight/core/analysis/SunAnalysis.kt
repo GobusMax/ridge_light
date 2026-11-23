@@ -6,6 +6,7 @@ import net.ridgelight.core.horizon.Horizon
 import net.ridgelight.core.horizon.HorizonCalculator
 import net.ridgelight.core.horizon.HorizonParams
 import net.ridgelight.core.pace.Schedule
+import net.ridgelight.core.pace.ScheduledBreak
 import net.ridgelight.core.route.SampledRoute
 import net.ridgelight.core.sun.SolarPosition
 import net.ridgelight.core.sun.SunPosition
@@ -96,49 +97,73 @@ internal class HorizonCache(
     }
 }
 
-/** A run of consecutive steps with the same light. */
+/**
+ * A stretch of time in one kind of light: a run of consecutive steps walked in that light, or
+ * (with [breakIndex] set) part of a break spent in it, where both distances are the break's place.
+ */
 class LightRun(
     val light: Light,
     val firstStep: Int,
-    /** Exclusive. */
+    /** Exclusive; equal to [firstStep] for a break. */
     val endStep: Int,
     val startSeconds: Double,
     val endSeconds: Double,
     val startDistance: Double,
     val endDistance: Double,
+    /** Index into [Schedule.breaks] if this is (part of) a break. */
+    val breakIndex: Int? = null,
 ) {
     val seconds: Double get() = endSeconds - startSeconds
+    val isBreak: Boolean get() = breakIndex != null
 }
+
+/** Light during one break, sampled every [BREAK_SAMPLE_SECONDS] or less. */
+class BreakLight(val stop: ScheduledBreak, val distance: Double, val pieces: List<Piece>) {
+    class Piece(val startSeconds: Double, val endSeconds: Double, val sample: LightSample)
+}
+
+/** Breaks are sampled at this interval; the sun moves about a quarter degree per minute. */
+const val BREAK_SAMPLE_SECONDS = 60.0
+
+/** Where the hiker is at one moment, and in what light. */
+class Moment(val distance: Double, val sample: LightSample, val breakIndex: Int?)
 
 class SunResult(
     val route: SampledRoute,
     val departureUtc: Long,
     val schedule: Schedule,
+    /** Light for each walked step, at its midpoint and mid-time. */
     val samples: List<LightSample>,
+    /** One per [Schedule.breaks], in the same order. */
+    val breaks: List<BreakLight> = emptyList(),
 ) {
+    /** Departure to arrival, breaks included. */
     val duration: Double get() = schedule.duration
     val lights: List<Light> get() = samples.map { it.light }
 
-    /** Seconds spent in each kind of light. */
+    /** Seconds spent in each kind of light, walking and on breaks. */
     val totals: Map<Light, Double> by lazy {
         val m = Light.entries.associateWith { 0.0 }.toMutableMap()
         samples.forEachIndexed { i, s -> m[s.light] = m.getValue(s.light) + schedule.stepSpan[i] }
+        for (b in breaks) for (p in b.pieces) m[p.sample.light] = m.getValue(p.sample.light) + (p.endSeconds - p.startSeconds)
         m
     }
 
     fun seconds(light: Light): Double = totals.getValue(light)
 
-    /** Fraction of walking time in direct sun. */
+    /** Fraction of the hike (walking and breaks) in direct sun. */
     val sunShare: Double get() = if (duration > 0) seconds(Light.SUN) / duration else 0.0
 
+    /** Walking runs: consecutive steps in the same light, split where a break interrupts them. */
     val runs: List<LightRun> by lazy {
+        val breakNodes = schedule.breaks.map { it.node }.toSet()
         val out = ArrayList<LightRun>()
         var i = 0
         val steps = route.steps
         while (i < samples.size) {
             val light = samples[i].light
             var j = i + 1
-            while (j < samples.size && samples[j].light == light) j++
+            while (j < samples.size && samples[j].light == light && j !in breakNodes) j++
             out += LightRun(
                 light, i, j,
                 schedule.stepStart[i], schedule.stepStart[j - 1] + schedule.stepSpan[j - 1],
@@ -149,17 +174,76 @@ class SunResult(
         out
     }
 
+    /** Walking runs and break periods (merged per light) in time order. */
+    val timeline: List<LightRun> by lazy {
+        val pauses = breaks.flatMapIndexed { k, b ->
+            val merged = ArrayList<LightRun>()
+            for (p in b.pieces) {
+                val last = merged.lastOrNull()
+                if (last != null && last.light == p.sample.light) {
+                    merged[merged.size - 1] = LightRun(last.light, b.stop.node, b.stop.node, last.startSeconds, p.endSeconds, b.distance, b.distance, k)
+                } else {
+                    merged += LightRun(p.sample.light, b.stop.node, b.stop.node, p.startSeconds, p.endSeconds, b.distance, b.distance, k)
+                }
+            }
+            merged
+        }
+        (runs + pauses).sortedBy { it.startSeconds }
+    }
+
+    /** Position and light at [seconds] after departure. */
+    fun momentAt(seconds: Double): Moment {
+        for ((k, b) in breaks.withIndex()) {
+            if (seconds >= b.stop.startSeconds && seconds < b.stop.endSeconds) {
+                val piece = b.pieces.firstOrNull { seconds < it.endSeconds } ?: b.pieces.last()
+                return Moment(b.distance, piece.sample, k)
+            }
+        }
+        val i = schedule.stepAt(seconds)
+        val step = route.steps[i]
+        val f = ((seconds - schedule.stepStart[i]) / schedule.stepSpan[i]).let { if (it.isFinite()) it.coerceIn(0.0, 1.0) else 0.0 }
+        return Moment(step.start.distance + step.length * f, samples[i], null)
+    }
+
+    /**
+     * Seconds of direct sun once clouds are taken into account: every stretch in terrain sun
+     * counts with the fraction [clearSky] gives for its place (metres along the route) and time.
+     * Null if [clearSky] has no answer for some sunny stretch (e.g. beyond the forecast).
+     */
+    fun expectedSunSeconds(clearSky: (distance: Double, utcMillis: Long) -> Double?): Double? {
+        var sum = 0.0
+        for ((i, s) in samples.withIndex()) {
+            if (s.light != Light.SUN) continue
+            val step = route.steps[i]
+            val clear = clearSky((step.start.distance + step.end.distance) / 2, timeAt(schedule.midTime(i))) ?: return null
+            sum += schedule.stepSpan[i] * clear
+        }
+        for (b in breaks) for (p in b.pieces) {
+            if (p.sample.light != Light.SUN) continue
+            val clear = clearSky(b.distance, timeAt((p.startSeconds + p.endSeconds) / 2)) ?: return null
+            sum += (p.endSeconds - p.startSeconds) * clear
+        }
+        return sum
+    }
+
     fun timeAt(seconds: Double): Long = departureUtc + (seconds * 1000).toLong()
 }
 
-data class SweepEntry(val departureUtc: Long, val totals: Map<Light, Double>, val duration: Double) {
+data class SweepEntry(
+    val departureUtc: Long,
+    val totals: Map<Light, Double>,
+    val duration: Double,
+    /** Direct sun after clouds (see [SunResult.expectedSunSeconds]), if a forecast was given and covers it. */
+    val expectedSun: Double? = null,
+) {
     val sunShare: Double get() = if (duration > 0) totals.getValue(Light.SUN) / duration else 0.0
+    val expectedShare: Double? get() = expectedSun?.let { if (duration > 0) it / duration else 0.0 }
 }
 
 /**
  * Sun and terrain shade along a route. Light is evaluated at each step's midpoint at the time
- * the [Schedule] says it is reached. Horizons are cached, so re-running with other departure
- * times is cheap.
+ * the [Schedule] says it is reached, and through each break at the break's place. Horizons are
+ * cached, so re-running with other departure times is cheap.
  *
  * [analyse] and [sweep] split the route into chunks and hand them to [runner], so they use
  * several cores when the platform provides them. Calls must not overlap: run one at a time.
@@ -196,14 +280,39 @@ class SunAnalyzer(
     private fun timeAt(schedule: Schedule, departureUtc: Long, step: Int): Long =
         departureUtc + (schedule.midTime(step) * 1000).toLong()
 
+    /**
+     * Light through each break. Evaluated at the midpoint of the step that follows the break
+     * (half a step from the stop, which reuses that step's cached horizons). Runs on the calling
+     * thread, after the chunks are done, so it never shares a step with a worker.
+     */
+    private fun breakLights(schedule: Schedule, departureUtc: Long): List<BreakLight> = schedule.breaks.map { b ->
+        val step = b.node.coerceAtMost(route.steps.size - 1)
+        val pieces = ArrayList<BreakLight.Piece>()
+        var t = b.startSeconds
+        while (t < b.endSeconds) {
+            val end = minOf(t + BREAK_SAMPLE_SECONDS, b.endSeconds)
+            pieces += BreakLight.Piece(t, end, lightAt(step, departureUtc + ((t + end) / 2 * 1000).toLong()))
+            t = end
+        }
+        BreakLight(b, route.nodes[b.node].distance, pieces)
+    }
+
     fun analyse(schedule: Schedule, departureUtc: Long): SunResult {
         require(schedule.stepStart.size == route.steps.size) { "Schedule does not match route" }
         val samples = arrayOfNulls<LightSample>(route.steps.size)
         forEachChunk { r -> for (i in r) samples[i] = lightAt(i, timeAt(schedule, departureUtc, i)) }
-        return SunResult(route, departureUtc, schedule, samples.map { it!! })
+        return SunResult(route, departureUtc, schedule, samples.map { it!! }, breakLights(schedule, departureUtc))
     }
 
-    fun sweep(schedule: Schedule, departures: List<Long>): List<SweepEntry> {
+    /**
+     * Totals for each departure; the same as [analyse] would give for each, but much cheaper.
+     * With [clearSky] (see [SunResult.expectedSunSeconds]) each entry also gets expected sun.
+     */
+    fun sweep(
+        schedule: Schedule,
+        departures: List<Long>,
+        clearSky: ((distance: Double, utcMillis: Long) -> Double?)? = null,
+    ): List<SweepEntry> {
         require(schedule.stepStart.size == route.steps.size) { "Schedule does not match route" }
         val n = route.steps.size
         val lights = ByteArray(departures.size * n)
@@ -216,11 +325,26 @@ class SunAnalyzer(
         val kinds = Light.entries
         return departures.mapIndexed { k, t ->
             val totals = kinds.associateWith { 0.0 }.toMutableMap()
+            var expected: Double? = if (clearSky != null) 0.0 else null
             for (i in 0 until n) {
                 val light = kinds[lights[k * n + i].toInt()]
                 totals[light] = totals.getValue(light) + schedule.stepSpan[i]
+                if (light == Light.SUN && expected != null) {
+                    val step = route.steps[i]
+                    val clear = clearSky!!((step.start.distance + step.end.distance) / 2, timeAt(schedule, t, i))
+                    expected = clear?.let { expected!! + schedule.stepSpan[i] * it }
+                }
             }
-            SweepEntry(t, totals, schedule.duration)
+            for (b in breakLights(schedule, t)) for (p in b.pieces) {
+                val light = p.sample.light
+                val seconds = p.endSeconds - p.startSeconds
+                totals[light] = totals.getValue(light) + seconds
+                if (light == Light.SUN && expected != null) {
+                    val clear = clearSky!!(b.distance, t + ((p.startSeconds + p.endSeconds) / 2 * 1000).toLong())
+                    expected = clear?.let { expected!! + seconds * it }
+                }
+            }
+            SweepEntry(t, totals, schedule.duration, expected)
         }
     }
 }

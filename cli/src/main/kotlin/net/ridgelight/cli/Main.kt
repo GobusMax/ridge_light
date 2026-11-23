@@ -12,6 +12,7 @@ import net.ridgelight.core.gpx.GpxReader
 import net.ridgelight.core.gpx.LightStyle
 import net.ridgelight.core.gpx.OsmAndExport
 import net.ridgelight.core.horizon.HorizonParams
+import net.ridgelight.core.pace.Break
 import net.ridgelight.core.pace.ConstantSpeedPace
 import net.ridgelight.core.pace.Din33466Pace
 import net.ridgelight.core.pace.PaceModel
@@ -21,6 +22,7 @@ import net.ridgelight.core.route.Route
 import net.ridgelight.core.route.RouteException
 import net.ridgelight.core.route.SampledRoute
 import net.ridgelight.core.sun.SunTimes
+import net.ridgelight.core.weather.RouteForecast
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -50,6 +52,8 @@ Options:
                        elevations for walking times: the track's own if complete (default),
                        or force track / terrain model
   --sweep              compare departures every 30 minutes through the day
+  --break <km>:<min>   a break at that distance, e.g. 6.2:45 (repeatable)
+  --weather            fetch an Open-Meteo forecast: hourly weather and sun after clouds
   --out <dir>          write one GPX per light class for OsmAnd
   --dem-dir <dir>      extra directory with {z}-{x}-{y}.png Terrarium tiles (repeatable)
   --offline            never download tiles
@@ -90,7 +94,7 @@ class Options(private val values: Map<String, List<String>>, val positional: Lis
     fun require(name: String): String = get(name) ?: throw IllegalArgumentException("Missing --$name")
 
     companion object {
-        private val flags = setOf("sweep", "offline", "profile")
+        private val flags = setOf("sweep", "offline", "profile", "weather")
         fun parse(args: List<String>): Options {
             val values = LinkedHashMap<String, MutableList<String>>()
             val positional = ArrayList<String>()
@@ -156,7 +160,11 @@ private fun analyse(opts: Options) {
     val source = ElevationSource.valueOf((opts.get("elevation") ?: "auto").uppercase())
     val sampled = SampledRoute.of(route, terrain, elevationSource = source)
     val (paceModel, paceName) = pace(opts)
-    val schedule = paceModel.schedule(sampled)
+    val breaks = opts.all("break").map {
+        val (km, min) = it.split(':').map(String::toDouble).also { v -> require(v.size == 2) { "--break needs <km>:<minutes>" } }
+        Break(km * 1000, min * 60)
+    }
+    val schedule = paceModel.schedule(sampled).withBreaks(sampled, breaks)
     val analyzer = SunAnalyzer(sampled, terrain, HorizonParams())
     val t0 = System.nanoTime()
     val result = analyzer.analyse(schedule, departure)
@@ -168,7 +176,8 @@ private fun analyse(opts: Options) {
         route.length / 1000, sampled.ascent.roundToInt(), sampled.descent.roundToInt(), duration(result.duration), paceName,
     ))
     if (route.gaps.isNotEmpty()) println("  Note: ${route.gaps.size} gap(s) between track segments are assumed straight.")
-    println("  Departure $date ${local(departure)} ($zone), arrival ${local(result.timeAt(result.duration))}")
+    println("  Departure $date ${local(departure)} ($zone), arrival ${local(result.timeAt(result.duration))}" +
+        if (schedule.breaks.isNotEmpty()) " (${duration(schedule.breakSeconds)} of breaks)" else "")
     println()
     for (light in Light.entries) {
         val s = result.seconds(light)
@@ -177,34 +186,36 @@ private fun analyse(opts: Options) {
     }
     println()
     println("  Stretches:")
-    for (run in result.runs) {
-        println("   %s–%s  %-14s %5.1f–%.1f km".format(
-            local(result.timeAt(run.startSeconds)), local(result.timeAt(run.endSeconds)), labels[run.light],
-            run.startDistance / 1000, run.endDistance / 1000,
-        ))
+    for (run in result.timeline) {
+        val where = if (run.isBreak) "break at %.1f km".format(run.startDistance / 1000) else "%5.1f–%.1f km".format(run.startDistance / 1000, run.endDistance / 1000)
+        println("   %s–%s  %-14s %s".format(local(result.timeAt(run.startSeconds)), local(result.timeAt(run.endSeconds)), labels[run.light], where))
     }
+    val forecast = if (opts.flag("weather")) fetchForecast(sampled, date, zone) else null
+    if (forecast != null) printWeather(result, forecast, local)
     System.err.println("  (light analysis: %.0f ms, %d steps)".format(ms, sampled.steps.size))
 
-    if (opts.flag("sweep")) sweep(analyzer, schedule, route, date, zone, start)
+    if (opts.flag("sweep")) sweep(analyzer, schedule, route, date, zone, start, forecast)
     opts.get("out")?.let { writeGpx(Path.of(it), result, gpx.name ?: "Route", local) }
 }
 
-private fun sweep(analyzer: SunAnalyzer, schedule: net.ridgelight.core.pace.Schedule, route: Route, date: LocalDate, zone: ZoneId, chosen: LocalTime) {
+private fun sweep(analyzer: SunAnalyzer, schedule: net.ridgelight.core.pace.Schedule, route: Route, date: LocalDate, zone: ZoneId, chosen: LocalTime, forecast: RouteForecast?) {
     val midnight = date.atStartOfDay(zone).toInstant().toEpochMilli()
     val day = SunTimes.day(route.start.lat, route.start.lon, midnight)
     val from = ((day.sunriseUtc ?: midnight) - 3_600_000L).let { it - Math.floorMod(it - midnight, 1_800_000L) }
     val to = (day.sunsetUtc ?: (midnight + 86_400_000L)) - 1_800_000L
     val t0 = System.nanoTime()
-    val entries = analyzer.sweep(schedule, departures(from, to, 30))
+    val entries = analyzer.sweep(schedule, departures(from, to, 30), forecast?.let { it::clearSky })
     val ms = (System.nanoTime() - t0) / 1e6
-    val best = entries.maxByOrNull { it.sunShare }
+    val withClouds = entries.all { it.expectedShare != null }
+    val best = entries.maxByOrNull { if (withClouds) it.expectedShare!! else it.sunShare }
     println()
-    println("  Departure comparison (sun share of walking time):")
+    println("  Departure comparison (sun share of the hike${if (withClouds) "; after forecast clouds" else ""}):")
     for (e in entries) {
         val t = Instant.ofEpochMilli(e.departureUtc).atZone(zone).toLocalTime()
         val bar = "█".repeat((e.sunShare * 20).roundToInt()).padEnd(20, '·')
         val mark = (if (t == chosen) " ← chosen" else "") + (if (e === best) " ★ most sun" else "")
-        println("   %s  %s %3d %%%s".format(t.format(clock), bar, (e.sunShare * 100).roundToInt(), mark))
+        val clouds = e.expectedShare?.let { " → %3d %%".format((it * 100).roundToInt()) } ?: ""
+        println("   %s  %s %3d %%%s%s".format(t.format(clock), bar, (e.sunShare * 100).roundToInt(), clouds, mark))
     }
     System.err.println("  (sweep: %.0f ms for %d departures)".format(ms, entries.size))
 }

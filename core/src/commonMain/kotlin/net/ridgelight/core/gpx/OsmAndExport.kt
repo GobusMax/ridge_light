@@ -55,19 +55,35 @@ object OsmAndExport {
         }
     }
 
-    fun transitions(result: SunResult, localTime: (Long) -> String): List<GpxWaypoint> =
-        result.runs.drop(1).map { run ->
+    /** Waypoints where the light changes along the walk, plus one per break. */
+    fun transitions(result: SunResult, localTime: (Long) -> String): List<GpxWaypoint> {
+        val changes = result.runs.zipWithNext().filter { (a, b) -> a.light != b.light }.map { (_, run) ->
             val verb = when (run.light) {
                 Light.SUN -> "Sun from"
                 Light.TERRAIN_SHADE -> "Shade from"
                 Light.BELOW_HORIZON -> "Sun down"
                 Light.UNKNOWN -> "Unknown from"
             }
+            // Until the light changes again, which may be after a break.
+            val next = result.runs.firstOrNull { it.startSeconds > run.startSeconds && it.light != run.light }
+            val walked = result.runs.filter { it.startSeconds >= run.startSeconds && (next == null || it.startSeconds < next.startSeconds) }
             GpxWaypoint(
                 result.route.steps[run.firstStep].start.position,
                 "$verb ${localTime(result.timeAt(run.startSeconds))}",
-                "${LightStyle.label(run.light)} for ${LightStyle.duration(run.seconds)}",
+                "${LightStyle.label(run.light)} for ${LightStyle.duration(walked.sumOf { it.seconds })} of walking",
                 LightStyle.color(run.light),
             )
         }
+        val stops = result.breaks.map { b ->
+            val byLight = b.pieces.groupBy { it.sample.light }.mapValues { (_, ps) -> ps.sumOf { it.endSeconds - it.startSeconds } }
+            val main = byLight.maxBy { it.value }.key
+            GpxWaypoint(
+                result.route.nodes[b.stop.node].position,
+                "Break ${localTime(result.timeAt(b.stop.startSeconds))}–${localTime(result.timeAt(b.stop.endSeconds))}",
+                byLight.entries.sortedByDescending { it.value }.joinToString(", ") { "${LightStyle.label(it.key)} ${LightStyle.duration(it.value)}" },
+                LightStyle.color(main),
+            )
+        }
+        return changes + stops
+    }
 }
