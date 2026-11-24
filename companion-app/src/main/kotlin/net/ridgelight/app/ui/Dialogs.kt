@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,32 +45,64 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** Pace factor on hiking-sign (DIN 33466) times, applied when the dialog closes. */
+/** A named pace: a factor on hiking-sign (DIN 33466) times, and who it suits. */
+class PacePreset(val name: String, val factor: Double, val suits: String)
+
+val PACES = listOf(
+    PacePreset("Fast", 0.75, "very fit, light pack, few stops"),
+    PacePreset("Brisk", 0.9, "fit hikers, a little quicker than the signs"),
+    PacePreset("Hiking signs", 1.0, "the times on yellow hiking signs"),
+    PacePreset("Relaxed", 1.2, "photo stops, or less fit"),
+    PacePreset("Leisurely", 1.4, "with children or a heavy pack"),
+)
+
+/** The preset's name for [factor], or "×1.10" between presets. */
+fun paceName(factor: Double): String = PACES.firstOrNull { abs(it.factor - factor) < 1e-3 }?.name ?: "×%.2f".format(factor)
+
+/**
+ * Pace: a preset, or any factor on the slider, applied when the dialog closes. Each choice shows
+ * the hike's resulting time: [walkingAtOne] seconds of walking at factor 1, plus [breakSeconds].
+ */
 @Composable
-fun PaceDialog(current: Double, dismiss: () -> Unit, set: (Double) -> Unit) {
+fun PaceDialog(current: Double, walkingAtOne: Double?, breakSeconds: Double, dismiss: () -> Unit, set: (Double) -> Unit) {
     var factor by remember { mutableFloatStateOf(current.toFloat()) }
+    fun time(f: Double) = walkingAtOne?.let { duration(it * f + breakSeconds) } ?: ""
     AlertDialog(
         onDismissRequest = dismiss,
-        title = { Text("Pace") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Pace", Modifier.weight(1f))
+                InfoButton("Pace") {
+                    InfoText("Walking times follow the rule behind hiking-sign times (DIN 33466): 4 km/h on the flat, 300 m up or 500 m down an hour, whichever takes longer plus half the other.")
+                    for (p in PACES) InfoText("${p.name} (×%.2f): ${p.suits}.".format(p.factor))
+                    InfoText("The slider sets any pace in between. Times include your breaks.")
+                }
+            }
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("×%.2f · %s".format(factor, paceWords(factor.toDouble())), style = MaterialTheme.typography.bodyLarge)
+            Column {
+                for (p in PACES) {
+                    val chosen = abs(factor - p.factor) < 1e-3
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable { factor = p.factor.toFloat() }.padding(vertical = 2.dp),
+                    ) {
+                        RadioButton(selected = chosen, onClick = { factor = p.factor.toFloat() })
+                        Text(p.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Text(time(p.factor), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    Text("×%.2f".format(factor), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(time(factor.toDouble()), style = MaterialTheme.typography.bodyMedium)
+                }
                 Slider(value = factor, onValueChange = { factor = (it * 20).roundToInt() / 20f }, valueRange = 0.6f..1.6f)
-                Text(
-                    "Walking times follow the rule behind hiking-sign times (DIN 33466). Below 1 you walk faster than the signs, above 1 slower.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
         },
         confirmButton = { TextButton(onClick = { set(factor.toDouble()); dismiss() }) { Text("Done") } },
         dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
     )
-}
-
-fun paceWords(factor: Double) = when {
-    factor < 0.95 -> "quicker than hiking signs"
-    factor > 1.05 -> "slower than hiking signs"
-    else -> "hiking-sign times"
 }
 
 /** The planned breaks, each removable, and a way to add one. */
@@ -83,7 +117,15 @@ fun BreaksDialog(
 ) {
     AlertDialog(
         onDismissRequest = dismiss,
-        title = { Text("Breaks") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Breaks", Modifier.weight(1f))
+                InfoButton("Breaks") {
+                    InfoText("A break stays at its place on the route when you change the start time or pace, and the light during it counts in the totals.")
+                    InfoText("To add one at a place, drag along the profile and tap “Break here”.")
+                }
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (breaks.isEmpty()) Text("No breaks planned.", style = MaterialTheme.typography.bodyMedium)
@@ -95,11 +137,6 @@ fun BreaksDialog(
                         TextButton(onClick = { remove(b) }) { Text("Remove") }
                     }
                 }
-                Text(
-                    "Tip: drag along the profile to a place and tap “Break here”.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         },
         confirmButton = { TextButton(onClick = dismiss) { Text("Done") } },
@@ -123,7 +160,12 @@ fun BreakDialog(result: SunResult, place: Double?, zone: ZoneId, dismiss: () -> 
     val clock = DateTimeFormatter.ofPattern("HH:mm")
     AlertDialog(
         onDismissRequest = dismiss,
-        title = { Text("Add a break") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Add a break", Modifier.weight(1f))
+                InfoButton(null) { InfoText("The break stays at this place when you change the start time or pace.") }
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (place == null) {
@@ -151,7 +193,6 @@ fun BreakDialog(result: SunResult, place: Double?, zone: ZoneId, dismiss: () -> 
                         FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text("$m min") })
                     }
                 }
-                Text("The break stays at this place when you change the start time or pace.", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {

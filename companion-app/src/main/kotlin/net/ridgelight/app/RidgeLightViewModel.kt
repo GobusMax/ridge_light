@@ -132,7 +132,7 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
     private var schedule: Triple<SunAnalyzer, Double, Schedule>? = null
     private var loadJob: Job? = null
     private var analysisJob: Job? = null
-    private val weatherClient = WeatherClient()
+    private val weatherClient = WeatherClient(app.cacheDir)
     private var weatherJob: Job? = null
     /** What the day list was computed for, so it is only redone when that changes. */
     private var daysKey: List<Any?>? = null
@@ -282,9 +282,10 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Fetches the cloud forecast for the whole forecast period, while Clouds is on; the only time
-     * the app sends route points to the weather service. A forecast less than an hour old is
-     * reused unless [force]d.
+     * The cloud forecast for the whole forecast period, while Clouds is on. A forecast for the same
+     * route younger than [FORECAST_MAX_AGE] is reused (from memory or disk), so switching Clouds
+     * off and on, or reopening the app, does not fetch again; [force] fetches anyway (Refresh).
+     * Fetching is the only time the app sends route points to the weather service.
      */
     fun loadClouds(force: Boolean = false) {
         if (!_state.value.cloudsEnabled) return
@@ -292,11 +293,17 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         val current = _state.value.weather
         if (current is WeatherState.Loading) return
         if (!force && current is WeatherState.Ready && System.currentTimeMillis() - current.fetchedAt < FORECAST_MAX_AGE) return
+        val maxAge = if (force) 0L else FORECAST_MAX_AGE
         weatherJob?.cancel()
+        weatherClient.cached(route, maxAge)?.let { f ->
+            _state.update { it.copy(weather = WeatherState.Ready(f.forecast, f.fetchedAt)) }
+            analyse(withSweep = true)
+            return
+        }
         _state.update { it.copy(weather = WeatherState.Loading) }
         weatherJob = viewModelScope.launch {
             val weather = try {
-                WeatherState.Ready(weatherClient.fetch(route), System.currentTimeMillis())
+                weatherClient.fetch(route, maxAge).let { WeatherState.Ready(it.forecast, it.fetchedAt) }
             } catch (e: WeatherException) {
                 WeatherState.Unavailable(e.message ?: "No forecast.")
             }
@@ -459,4 +466,5 @@ private const val PREF_PLAN_ZONE = "plan_zone"
 private const val PREF_PLAN_PACE = "plan_pace"
 private const val PREF_PLAN_BREAKS = "plan_breaks"
 private const val PREF_CLOUDS_EXPLAINED = "clouds_explained"
-private const val FORECAST_MAX_AGE = 3_600_000L
+/** Forecast models are rerun every few hours; a younger forecast is not fetched again. */
+private const val FORECAST_MAX_AGE = 3 * 3_600_000L

@@ -54,7 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -97,8 +97,6 @@ fun MainScreen(
     var menu by remember { mutableStateOf(false) }
     var zoneDialog by remember { mutableStateOf(false) }
     var cloudsDialog by remember { mutableStateOf(false) }
-    var stretchesOpen by rememberSaveable { mutableStateOf(false) }
-    var forecastOpen by rememberSaveable { mutableStateOf(false) }
     val toggleClouds = { on: Boolean -> if (on && !vm.cloudsExplained) cloudsDialog = true else vm.setClouds(on) }
     Scaffold(
         topBar = {
@@ -149,27 +147,7 @@ fun MainScreen(
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 return@Column
             }
-            val stretches = state.sky?.stretches ?: result.timeline.map { SkyStretch(it, SkyLight.of(it.light, null), null) }
-            val t = scrub.value.coerceIn(0.0, result.duration)
-            val current = stretches.indexOfFirst { t >= it.run.startSeconds && t < it.run.endSeconds }.let { if (it < 0) stretches.lastIndex else it }
-            val highlight = stretches.getOrNull(current)?.run?.takeIf { stretchesOpen }?.let { it.startDistance..it.endDistance }
-            SunCard(state, result, t, showHint, onScrub, vm, toggleClouds, highlight)
-            Expandable("Stretches", "${stretches.size}", stretchesOpen, { stretchesOpen = !stretchesOpen }) {
-                stretches.forEachIndexed { i, st -> StretchRow(result, st, i == current, vm::localTime) { onScrub(st.run.startSeconds) } }
-                Text(
-                    "Tap a stretch to find it on the profile.",
-                    Modifier.padding(start = 6.dp, top = 4.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            val weather = state.weather
-            if (state.cloudsEnabled && weather is WeatherState.Ready) {
-                val at = Instant.ofEpochMilli(weather.fetchedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
-                Expandable("Cloud forecast", "from $at", forecastOpen, { forecastOpen = !forecastOpen }) {
-                    ForecastDetails(state.sky) { vm.loadClouds(force = true) }
-                }
-            }
+            SunCard(state, result, scrub.value.coerceIn(0.0, result.duration), showHint, onScrub, vm, toggleClouds)
             PreviewTiles(state, vm, open)
             OsmAndButton(state, showInOsmAnd)
         }
@@ -211,19 +189,19 @@ private fun PlanRow(state: UiState, vm: RidgeLightViewModel) {
     var breakDialog by remember { mutableStateOf(false) }
     OutlinedCard(Modifier.fillMaxWidth()) {
         Row(Modifier.height(IntrinsicSize.Min)) {
-            PlanCell("Date", settings.date.format(dayFormat), Modifier.weight(1.05f)) {
+            PlanCell("Date", settings.date.format(dayFormat), Modifier.weight(1f)) {
                 DatePickerDialog(context, { _, y, m, d -> vm.update(settings.copy(date = LocalDate.of(y, m + 1, d))) },
                     settings.date.year, settings.date.monthValue - 1, settings.date.dayOfMonth).show()
             }
             VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            PlanCell(if (result != null) "Start – back" else "Start", result?.let { "${settings.start}–${vm.localTime(it.timeAt(it.duration))}" } ?: "${settings.start}", Modifier.weight(1.2f)) {
+            PlanCell(if (result != null) "Start – back" else "Start", result?.let { "${settings.start}–${vm.localTime(it.timeAt(it.duration))}" } ?: "${settings.start}", Modifier.weight(1.15f)) {
                 TimePickerDialog(context, { _, h, m -> vm.update(settings.copy(start = LocalTime.of(h, m))) },
                     settings.start.hour, settings.start.minute, true).show()
             }
             VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            PlanCell("Pace", "×%.2f".format(settings.paceFactor), Modifier.weight(0.75f)) { paceDialog = true }
+            PlanCell("Pace", paceName(settings.paceFactor), Modifier.weight(0.95f)) { paceDialog = true }
             VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            PlanCell("Breaks", if (settings.breaks.isEmpty()) "None" else "☕ ${settings.breaks.size}", Modifier.weight(0.8f)) {
+            PlanCell("Breaks", if (settings.breaks.isEmpty()) "None" else "☕ ${settings.breaks.size}", Modifier.weight(0.7f)) {
                 if (settings.breaks.isEmpty()) {
                     if (result != null) breakDialog = true
                 } else {
@@ -232,7 +210,10 @@ private fun PlanRow(state: UiState, vm: RidgeLightViewModel) {
             }
         }
     }
-    if (paceDialog) PaceDialog(settings.paceFactor, { paceDialog = false }) { vm.update(settings.copy(paceFactor = it)) }
+    if (paceDialog) {
+        val walkingAtOne = result?.let { (it.duration - it.schedule.breakSeconds) / settings.paceFactor }
+        PaceDialog(settings.paceFactor, walkingAtOne, result?.schedule?.breakSeconds ?: 0.0, { paceDialog = false }) { vm.update(settings.copy(paceFactor = it)) }
+    }
     if (breaksDialog) {
         BreaksDialog(settings.breaks, result, vm::localTime, { breaksDialog = false }, vm::removeBreak) {
             breaksDialog = false
@@ -261,28 +242,6 @@ internal fun Section(modifier: Modifier = Modifier, padding: Dp = 12.dp, content
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
-    }
-}
-
-/** A card whose header opens and closes its [content]. */
-@Composable
-internal fun Expandable(title: String, trailing: String?, expanded: Boolean, toggle: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().clickable(onClick = toggle).padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            trailing?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            val turn by animateFloatAsState(if (expanded) 90f else 0f, label = "chevron")
-            Icon(AppIcons.Chevron, if (expanded) "Close" else "Open", Modifier.padding(start = 6.dp).size(20.dp).rotate(turn), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        AnimatedVisibility(expanded) {
-            Column(Modifier.padding(start = 6.dp, end = 6.dp, bottom = 10.dp), content = content)
-        }
     }
 }
 
@@ -315,9 +274,9 @@ private fun Failure(message: String, openFile: () -> Unit) = Section {
 
 /**
  * The answer: time in sun (with the clouds when they are on), the Clouds switch, the profile and
- * its bars to drag along, the legend, and where the hiker is at the cursor.
+ * its bars to drag along, and where the hiker is at the cursor. It looks the same with and
+ * without clouds; explanations are behind the ⓘ buttons.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SunCard(
     state: UiState,
@@ -327,96 +286,118 @@ private fun SunCard(
     onScrub: (Double) -> Unit,
     vm: RidgeLightViewModel,
     toggleClouds: (Boolean) -> Unit,
-    highlight: ClosedFloatingPointRange<Double>?,
 ) = Section(padding = 10.dp) {
     val sky = state.sky
     val combined = sky?.totals ?: SkyLight.ofTerrain(result.totals)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            // Sun, and sun between clouds as "+…" in its own colour, like the profile.
-            val sun = combined.getValue(SkyLight.SUN)
-            val partly = combined.getValue(SkyLight.SUN_AND_CLOUDS)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val onlyBetween = sun < 60 && partly >= 60
-                if (!onlyBetween) Text(duration(sun), fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.alignByBaseline())
-                if (partly >= 60) {
-                    Text(
-                        (if (onlyBetween) "" else "+") + duration(partly),
-                        fontSize = if (onlyBetween) 30.sp else 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PartlyText,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
-                Text(
-                    when {
-                        onlyBetween -> "of sun between clouds"
-                        partly >= 60 -> "in sun, + between clouds"
-                        else -> "in sun"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.alignByBaseline(),
-                )
-            }
-            CloudStatus(state, result, vm)
+            Headline(combined)
+            CloudStatus(state, result, combined, vm)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = 8.dp)) {
             Switch(checked = state.cloudsEnabled, onCheckedChange = toggleClouds)
-            Text("Clouds", style = MaterialTheme.typography.labelSmall)
-        }
-    }
-    ProfileChart(result, sky, state.settings.zone, t, onScrub, highlight = highlight, hint = if (showHint) "Drag along the profile" else null)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        for (light in SkyLight.entries) {
-            val s = combined.getValue(light)
-            if (s < 30) continue
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Dot(skyLightColor(light), 8.dp)
-                Spacer(Modifier.width(4.dp))
-                Text("${shortLabel(light)} ${duration(s)}", style = MaterialTheme.typography.bodySmall)
+                Text("Clouds", style = MaterialTheme.typography.labelSmall)
+                InfoButton("Clouds") { CloudsInfo(state) { vm.loadClouds(force = true) } }
             }
         }
     }
-    if (sky != null) CloudsLegend()
+    Box {
+        ProfileChart(
+            result, sky, state.settings.zone, t, onScrub,
+            hint = if (showHint) "Drag along the profile" else null,
+            cloudsNote = cloudsNote(state),
+        )
+        InfoButton("Reading the profile", Modifier.align(Alignment.TopEnd)) { ProfileInfo(combined, state.cloudsEnabled) }
+    }
     Readout(result, sky, t, state.settings, vm)
 }
 
-/** Under the headline: what the number includes, or how the cloud forecast is getting on. */
+/** Sun, and sun between clouds as "+…" in its own colour, like the profile; one line. */
 @Composable
-private fun CloudStatus(state: UiState, result: SunResult, vm: RidgeLightViewModel) {
+private fun Headline(combined: Map<SkyLight, Double>) {
+    val sun = combined.getValue(SkyLight.SUN)
+    val partly = combined.getValue(SkyLight.SUN_AND_CLOUDS)
+    val onlyBetween = sun < 60 && partly >= 60
+    Row {
+        if (!onlyBetween) Text(duration(sun), fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.alignByBaseline())
+        if (partly >= 60) {
+            if (!onlyBetween) Spacer(Modifier.width(6.dp))
+            Text(
+                (if (onlyBetween) "" else "+") + duration(partly),
+                fontSize = if (onlyBetween) 30.sp else 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = PartlyText,
+                modifier = Modifier.alignByBaseline(),
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text("in sun", style = MaterialTheme.typography.bodyLarge, maxLines = 1, modifier = Modifier.alignByBaseline())
+    }
+}
+
+/** One line under the headline: what the number includes, or how the cloud forecast is getting on. */
+@Composable
+private fun CloudStatus(state: UiState, result: SunResult, combined: Map<SkyLight, Double>, vm: RidgeLightViewModel) {
     val small = MaterialTheme.typography.bodySmall
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val terrainOnly = "${(result.sunShare * 100).roundToInt()} % of the hike · from the terrain alone"
     when (val weather = state.weather) {
-        WeatherState.Idle -> Text(if (state.cloudsEnabled) "Waiting for the cloud forecast…" else terrainOnly, style = small, color = muted)
-        WeatherState.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.width(6.dp))
-            Text("Loading the cloud forecast…", style = small, color = muted)
+        WeatherState.Idle, WeatherState.Loading -> if (state.cloudsEnabled) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(6.dp))
+                Text("Loading the cloud forecast…", style = small, color = muted, maxLines = 1)
+            }
+        } else {
+            Text("${(result.sunShare * 100).roundToInt()} % of the hike · terrain alone", style = small, color = muted, maxLines = 1)
         }
         is WeatherState.Unavailable -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(weather.message, Modifier.weight(1f, fill = false), style = small, color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = { vm.loadClouds(force = true) }) { Text("Retry") }
+            Text(weather.message, Modifier.weight(1f, fill = false), style = small, color = MaterialTheme.colorScheme.error, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "Retry",
+                Modifier.clickable { vm.loadClouds(force = true) }.padding(horizontal = 8.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
         is WeatherState.Ready -> {
-            val sky = state.sky
-            if (sky == null) {
-                val last = Instant.ofEpochMilli(weather.forecast.period.last).atZone(state.settings.zone).toLocalDate()
-                Text("No cloud forecast for this date yet (it reaches ${last.format(dayFormat)}) · terrain alone", style = small, color = muted)
-            } else {
-                Text("Terrain alone ${duration(result.seconds(Light.SUN))}", style = small, color = muted)
+            val partly = combined.getValue(SkyLight.SUN_AND_CLOUDS)
+            val text = when {
+                state.sky == null -> "No cloud forecast for this date yet · terrain alone"
+                partly < 60 -> "Terrain alone ${duration(result.seconds(Light.SUN))}"
+                combined.getValue(SkyLight.SUN) < 60 -> "Between clouds · terrain alone ${duration(result.seconds(Light.SUN))}"
+                else -> "+ between clouds · terrain alone ${duration(result.seconds(Light.SUN))}"
             }
+            Text(text, style = small, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
-/** What the grey in the Clouds bar means. */
+/** Written into the empty Clouds bar when there is no cloud forecast to show. */
+private fun cloudsNote(state: UiState): String? = if (!state.cloudsEnabled) "off" else when (state.weather) {
+    WeatherState.Idle, WeatherState.Loading -> "loading…"
+    is WeatherState.Unavailable -> "no forecast"
+    is WeatherState.Ready -> if (state.sky == null) "no forecast for this date yet" else null
+}
+
+/** The colours, the two bars and how to use the profile. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CloudsLegend() {
+private fun ProfileInfo(combined: Map<SkyLight, Double>, clouds: Boolean) {
+    val shown = if (clouds) SkyLight.entries else listOf(SkyLight.SUN, SkyLight.SHADE, SkyLight.DARK, SkyLight.UNKNOWN)
+    for (light in shown) {
+        val s = combined.getValue(light)
+        if (light == SkyLight.UNKNOWN && s < 30) continue
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Dot(skyLightColor(light), 10.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(label(light), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Text(duration(s), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        }
+    }
+    InfoText("Terrain bar: sun and shade from the mountains alone. Clouds bar: the sky above you when you get there:")
     val grey = MaterialTheme.colorScheme.onSurfaceVariant
     FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("Clouds:", style = MaterialTheme.typography.bodySmall, color = grey)
         for (s in listOf(Sky.CLEAR, Sky.THIN_CLOUD, Sky.PARTLY_CLOUDY, Sky.OVERCAST, Sky.IN_CLOUD)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
@@ -434,11 +415,41 @@ private fun CloudsLegend() {
                         Sky.IN_CLOUD -> "fog"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = grey,
                 )
             }
         }
     }
+    InfoText("Drag along the profile or the bars to follow the hike; near a break (ring) the cursor jumps to it. The marks underneath show where you are at each full hour.")
+}
+
+/** What Clouds does, what it sends, the current forecast and how far to trust it. */
+@Composable
+private fun CloudsInfo(state: UiState, refresh: () -> Unit) {
+    InfoText(
+        "Combines the terrain with the cloud forecast at your altitude and time: under a clear sky sun stays sun, " +
+            "under broken cloud it becomes “sun and clouds”, overcast or fog hides it.",
+    )
+    InfoText("The forecast comes from Open-Meteo for up to six points of your route and is kept for three hours.")
+    val weather = state.weather
+    val sky = state.sky
+    if (state.cloudsEnabled && weather is WeatherState.Ready) {
+        if (sky != null && sky.inCloudSeconds >= 60) {
+            val where = sky.inCloudRanges.joinToString(", ") { "km %.1f–%.1f".format(it.start / 1000, it.endInclusive / 1000) }
+            InfoText("In fog or cloud for ${duration(sky.inCloudSeconds)} ($where).")
+        }
+        if (sky != null && sky.sunAboveClouds >= 60) InfoText("Above a sea of cloud for ${duration(sky.sunAboveClouds)} of the sun.")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val at = Instant.ofEpochMilli(weather.fetchedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+            Text("Forecast from $at", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = refresh) { Text("Refresh") }
+        }
+    }
+    Text(
+        "Forecast models work on a grid of a few kilometres and on levels a few hundred metres apart, often misplace low fog, " +
+            "and are rough more than a week ahead. ${OpenMeteo.ATTRIBUTION}.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** Where the hiker is at the cursor, in what light, and "Break here". */
@@ -489,75 +500,30 @@ private fun Readout(result: SunResult, sky: SkyReport?, t: Double, settings: Set
 }
 
 @Composable
-private fun StretchRow(result: SunResult, st: SkyStretch, chosen: Boolean, localTime: (Long) -> String, onClick: () -> Unit) {
-    val run = st.run
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(if (chosen) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
-    ) {
-        val color = skyLightColor(st.light).let { if (run.isBreak) it.copy(alpha = 0.5f) else it }
-        Box(Modifier.size(width = 4.dp, height = 30.dp).background(color, RoundedCornerShape(2.dp)))
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            val what = (if (run.isBreak) "☕ Break · " else "") + label(st.light, st.sky)
-            Text("${localTime(result.timeAt(run.startSeconds))}–${localTime(result.timeAt(run.endSeconds))} · $what", style = MaterialTheme.typography.bodyMedium)
-            val where = if (run.isBreak) "at km %.1f".format(run.startDistance / 1000) else "km %.1f–%.1f".format(run.startDistance / 1000, run.endDistance / 1000)
-            Text("$where · ${duration(run.seconds)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-/** Fog, a sea of cloud below, how far to trust it, and where it comes from. */
-@Composable
-private fun ForecastDetails(sky: SkyReport?, refresh: () -> Unit) {
-    Column(Modifier.padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val body = MaterialTheme.typography.bodyMedium
-        if (sky != null) {
-            if (sky.inCloudSeconds >= 60) {
-                val where = sky.inCloudRanges.joinToString(", ") { "km %.1f–%.1f".format(it.start / 1000, it.endInclusive / 1000) }
-                Text("In fog or cloud for ${duration(sky.inCloudSeconds)} ($where).", style = body)
-            }
-            if (sky.sunAboveClouds >= 60) Text("Above a sea of cloud for ${duration(sky.sunAboveClouds)} of the sun.", style = body)
-        }
-        Text(
-            "The profile's colours combine terrain and clouds. Grey behind the profile: the forecast cloud at each height when you pass. " +
-                "Forecast models work on a grid of a few kilometres and on levels a few hundred metres apart, and often misplace low fog; " +
-                "more than a week ahead they are rough.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(OpenMeteo.ATTRIBUTION, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = refresh) { Text("Refresh") }
-        }
-    }
-}
-
-@Composable
 private fun PreviewTiles(state: UiState, vm: RidgeLightViewModel, open: (Page) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Tile("Start times", Modifier.weight(1f), { open(Page.START_TIMES) }) { StartTimesPreview(state, vm::localTime) }
-        if (state.cloudsEnabled) {
-            Tile("Which day?", Modifier.weight(1f), {
-                if (state.weather is WeatherState.Unavailable) vm.loadClouds(force = true)
-                open(Page.DAYS)
-            }) { DaysPreview(state) }
-        }
+        Tile("Start times", Modifier.weight(1f), true, { open(Page.START_TIMES) }) { StartTimesPreview(state, vm::localTime) }
+        // Always there, so nothing moves when Clouds is switched; it needs the forecast to work.
+        Tile("Which day?", Modifier.weight(1f), state.cloudsEnabled, {
+            if (state.weather is WeatherState.Unavailable) vm.loadClouds(force = true)
+            open(Page.DAYS)
+        }) { DaysPreview(state) }
     }
 }
 
 @Composable
-private fun Tile(title: String, modifier: Modifier, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+private fun Tile(title: String, modifier: Modifier, enabled: Boolean, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val container = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
     Card(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+        enabled = enabled,
+        colors = CardDefaults.cardColors(containerColor = container, disabledContainerColor = container),
         modifier = modifier.height(104.dp),
     ) {
-        Column(Modifier.padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(
+            Modifier.padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 10.dp).alpha(if (enabled) 1f else 0.6f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Icon(AppIcons.Chevron, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -589,6 +555,11 @@ private fun ColumnScope.StartTimesPreview(state: UiState, localTime: (Long) -> S
 @Composable
 private fun ColumnScope.DaysPreview(state: UiState) {
     val small = MaterialTheme.typography.bodySmall
+    if (!state.cloudsEnabled) {
+        Text("Needs Clouds", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Text("Switch on Clouds to compare the forecast days", style = small)
+        return
+    }
     when (state.weather) {
         WeatherState.Idle, WeatherState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         is WeatherState.Unavailable -> {
@@ -629,4 +600,4 @@ private fun OsmAndButton(state: UiState, showInOsmAnd: () -> Unit) {
 private val PartlyText = Color(0xFFA8823A)
 
 /** "Tue 24 Nov · start 09:00 · pace ×1.00", for the other pages. */
-internal fun planLine(s: Settings) = "${s.date.format(dayFormat)} · start ${s.start} · pace ×%.2f".format(s.paceFactor)
+internal fun planLine(s: Settings) = "${s.date.format(dayFormat)} · start ${s.start} · pace ${paceName(s.paceFactor)}"

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -46,7 +47,13 @@ enum class Page { MAIN, START_TIMES, DAYS, ABOUT }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetailScaffold(title: String, subtitle: String?, back: () -> Unit, content: @Composable (PaddingValues) -> Unit) {
+private fun DetailScaffold(
+    title: String,
+    subtitle: String?,
+    back: () -> Unit,
+    info: (@Composable ColumnScope.() -> Unit)? = null,
+    content: @Composable (PaddingValues) -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -59,6 +66,7 @@ private fun DetailScaffold(title: String, subtitle: String?, back: () -> Unit, c
                     }
                 },
                 navigationIcon = { IconButton(onClick = back) { Icon(AppIcons.Back, "Back") } },
+                actions = { info?.let { InfoButton(title, Modifier.padding(end = 8.dp), it) } },
             )
         },
         content = content,
@@ -67,10 +75,6 @@ private fun DetailScaffold(title: String, subtitle: String?, back: () -> Unit, c
 
 private fun listPadding(padding: PaddingValues) =
     PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 24.dp)
-
-@Composable
-private fun Note(text: String) =
-    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 /** A row that can be picked; [chosen] is highlighted. */
 @Composable
@@ -98,19 +102,17 @@ private fun RowScope.Comparison(combined: Map<net.ridgelight.core.weather.SkyLig
 /** Sun for each start time of the day; tapping one makes it the plan's start. */
 @Composable
 fun StartTimesScreen(state: UiState, localTime: (Long) -> String, pick: (LocalTime) -> Unit, back: () -> Unit) =
-    DetailScaffold("Start times", planLine(state.settings), back) { padding ->
+    DetailScaffold("Start times", planLine(state.settings), back, info = {
+        val withClouds = state.sweep?.any { it.skyTotals != null } == true
+        InfoText("Your plan with each start time through the day: same date, route, pace and breaks. Tap a time to use it.")
+        InfoText(
+            if (withClouds) "Terrain and the cloud forecast combined. The number is sun; after “+”, sun between clouds."
+            else "From the terrain alone. With Clouds switched on, the cloud forecast is included.",
+        )
+        InfoText("★ most sun" + if (withClouds) ", with sun between clouds counted half." else ".")
+    }) { padding ->
         val sweep = state.sweep
-        val withClouds = sweep?.any { it.skyTotals != null } == true
         LazyColumn(contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            item {
-                Note(
-                    "Same day, route, pace and breaks. " +
-                        (if (withClouds) "Terrain and the cloud forecast combined: sun, and after “+” sun between clouds. "
-                        else "From the terrain alone; switch on Clouds on the main page to include the forecast. ") +
-                        "Tap a time to use it.",
-                )
-                Spacer(Modifier.height(6.dp))
-            }
             if (sweep == null) {
                 item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 return@LazyColumn
@@ -124,22 +126,19 @@ fun StartTimesScreen(state: UiState, localTime: (Long) -> String, pick: (LocalTi
                     Comparison(e.combined, e === best)
                 }
             }
-            item {
-                Spacer(Modifier.height(6.dp))
-                Note("★ most sun" + if (withClouds) " (sun between clouds counts half)." else ".")
-            }
         }
     }
 
 /** The plan on each forecast day; tapping one makes it the plan's date. */
 @Composable
 fun DaysScreen(state: UiState, pick: (LocalDate) -> Unit, retry: () -> Unit, back: () -> Unit) =
-    DetailScaffold("Which day?", "Start ${state.settings.start} · pace ×%.2f".format(state.settings.paceFactor), back) { padding ->
+    DetailScaffold("Which day?", "Start ${state.settings.start} · pace ${paceName(state.settings.paceFactor)}", back, info = {
+        InfoText("Your start, pace and breaks on each day of the cloud forecast, terrain and clouds combined. Tap a day to use it.")
+        InfoText("The number is sun; after “+”, sun between clouds. ★ most sun, with sun between clouds counted half.")
+        InfoText("Days more than a week ahead are greyed: their forecast is rough.")
+        Text(OpenMeteo.ATTRIBUTION, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }) { padding ->
         LazyColumn(contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            item {
-                Note("Your start, pace and breaks on each forecast day, terrain and clouds combined: sun, and after “+” sun between clouds. Tap a day to use it.")
-                Spacer(Modifier.height(6.dp))
-            }
             val weather = state.weather
             val days = state.days
             when {
@@ -158,12 +157,6 @@ fun DaysScreen(state: UiState, pick: (LocalDate) -> Unit, retry: () -> Unit, bac
                             Text(d.date.format(dayFormat), Modifier.width(100.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
                             Comparison(d.combined, d === best)
                         }
-                    }
-                    item {
-                        Spacer(Modifier.height(6.dp))
-                        Note("★ most sun (sun between clouds counts half). Days more than a week ahead are greyed: their forecast is rough.")
-                        Spacer(Modifier.height(4.dp))
-                        Note(OpenMeteo.ATTRIBUTION)
                     }
                 }
             }

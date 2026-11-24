@@ -89,13 +89,17 @@ track and its plan come back when the app is opened again.
 
 The main page shows:
 - **Plan:** one row with date, start and return, pace and breaks. Tap a cell to change it.
+  Pace offers five presets (Fast, Brisk, Hiking signs, Relaxed, Leisurely) with the resulting
+  hike time, and a slider for anything in between.
 - **Sun:** the time in sun and the **Clouds** switch.
-- **Profile:** coloured by the light at the time you get there. Drag along it to see where you
-  are when, and in what light; near a break, the cursor snaps to it. Hour marks underneath
-  show where you are at each full hour.
-- **Stretches:** opens in place. Tapping a stretch moves the cursor to it.
+- **Profile:** coloured by the light at the time you get there, with a Terrain and a Clouds
+  bar underneath. Drag along it to see where you are when, and in what light; near a break,
+  the cursor snaps to it. Hour marks underneath show where you are at each full hour.
 - **Tiles** for two pages: **Start times** (sun for each start through the day) and **Which
-  day?** (your plan on each forecast day). Tap a row there to use it.
+  day?** (your plan on each forecast day; needs Clouds). Tap a row there to use it.
+
+Explanations (colours, bars, pace, clouds, what a page compares) are behind ⓘ buttons. The page
+looks the same with Clouds on or off; only the contents change.
 
 The ⋮ menu has the time zone and **About** (how it works, limits, privacy, data sources).
 
@@ -103,13 +107,15 @@ The ⋮ menu has the time zone and **About** (how it works, limits, privacy, dat
   one at a time of the current plan. A break stays at its place when start time or pace change,
   and its light counts in the totals.
 - **Clouds.** Off by default; the first time it's switched on, the app says what is sent. While
-  on, the forecast loads by itself (it sends up to six points of the route to Open-Meteo), and:
-  - the profile shows terrain and clouds combined, with two bars underneath for the causes,
-    **Terrain** and **Clouds**, and the forecast cloud faintly behind it;
+  on, the forecast loads by itself (it sends up to six points of the route to Open-Meteo) and
+  is kept for three hours, in memory and on disk, so switching off and on, changing the date
+  or reopening the app does not fetch again; "Refresh" in the Clouds ⓘ does. Then:
+  - the profile shows terrain and clouds combined, the Clouds bar fills in, and the forecast
+    cloud is drawn faintly behind the profile;
   - start times are compared with the clouds;
-  - "Which day?" appears;
-  - "Cloud forecast" opens to show fog along the route, time above a sea of cloud, and how far
-    to trust the forecast.
+  - "Which day?" works;
+  - the Clouds ⓘ shows fog along the route, time above a sea of cloud, and how far to trust
+    the forecast.
 - **Show on OsmAnd's map** imports one track per kind of light, coloured, with waypoints where
   the light changes and at breaks. They go to OsmAnd's `tracks/ridgelight-*.gpx` and are
   replaced on each run.
