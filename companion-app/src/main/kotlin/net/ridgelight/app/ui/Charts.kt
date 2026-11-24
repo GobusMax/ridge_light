@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
@@ -22,7 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.ridgelight.core.analysis.Light
 import net.ridgelight.core.analysis.SunResult
+import net.ridgelight.core.weather.CloudColumn
+import net.ridgelight.core.weather.SkyModel
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Horizontal bar split by time spent in each kind of light. */
@@ -62,10 +66,16 @@ fun TimelineBar(result: SunResult, modifier: Modifier = Modifier.fillMaxWidth().
 
 /**
  * Elevation profile coloured by the light at the time each stretch is reached, with a cursor at
- * [cursorDistance] metres.
+ * [cursorDistance] metres. With [clouds], the forecast cloud at each height is drawn in grey
+ * behind it, as it will be when the hiker passes.
  */
 @Composable
-fun ProfileChart(result: SunResult, cursorDistance: Double?, modifier: Modifier = Modifier.fillMaxWidth().height(170.dp)) {
+fun ProfileChart(
+    result: SunResult,
+    cursorDistance: Double?,
+    clouds: List<CloudColumn>? = null,
+    modifier: Modifier = Modifier.fillMaxWidth().height(if (clouds != null) 200.dp else 170.dp),
+) {
     val measurer = rememberTextMeasurer()
     val axis = MaterialTheme.colorScheme.onSurfaceVariant
     val cursorColor = MaterialTheme.colorScheme.onSurface
@@ -73,8 +83,11 @@ fun ProfileChart(result: SunResult, cursorDistance: Double?, modifier: Modifier 
     val elevations = nodes.map { it.elevation }.filter { it.isFinite() }
     if (elevations.isEmpty()) return
     val minE = elevations.min()
-    val maxE = max(elevations.max(), minE + 50)
+    val routeTop = max(elevations.max(), minE + 50)
+    // With clouds, leave room above the route to show what hangs over it.
+    val maxE = if (clouds != null) routeTop + max(300.0, 0.3 * (routeTop - minE)) else routeTop
     val length = result.route.length
+    val cloudColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     Canvas(modifier) {
         val left = 44.dp.toPx()
@@ -84,6 +97,7 @@ fun ProfileChart(result: SunResult, cursorDistance: Double?, modifier: Modifier 
         fun x(d: Double) = left + (right - left) * (d / length).toFloat()
         fun y(e: Double) = bottom - (bottom - top) * ((e - minE) / (maxE - minE)).toFloat()
 
+        clouds?.let { drawClouds(it, cloudColor, minE, maxE, left, right, top, bottom, ::x) }
         label(measurer, "${maxE.roundToInt()} m", Offset(0f, top), axis)
         label(measurer, "${minE.roundToInt()} m", Offset(0f, bottom - 14.sp.toPx()), axis)
         label(measurer, "0 km", Offset(left, bottom + 2.dp.toPx()), axis)
@@ -128,6 +142,43 @@ fun ProfileChart(result: SunResult, cursorDistance: Double?, modifier: Modifier 
             if (e.isFinite()) {
                 drawCircle(cursorColor, 5.dp.toPx(), Offset(cx, y(e)))
             }
+        }
+    }
+}
+
+/**
+ * Cloud cover by height between levels, as grey with opacity by cover; cloud above the chart
+ * shows as a strip along its top edge.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawClouds(
+    columns: List<CloudColumn>,
+    color: Color,
+    minE: Double,
+    maxE: Double,
+    left: Float,
+    right: Float,
+    top: Float,
+    bottom: Float,
+    x: (Double) -> Float,
+) {
+    fun y(e: Double) = bottom - (bottom - top) * ((e - minE) / (maxE - minE)).toFloat()
+    val strip = 5.dp.toPx()
+    clipRect(left, top, right, bottom) {
+        for (c in columns) {
+            val p = c.profile ?: continue
+            val x0 = x(c.fromDistance)
+            val x1 = max(x(c.toDistance), x0 + 1f)
+            for (k in 0 until p.heights.size - 1) {
+                val lo = max(p.heights[k], minE)
+                val hi = min(p.heights[k + 1], maxE)
+                if (hi <= lo) continue
+                val cover = (p.cover[k] + p.cover[k + 1]) / 2
+                if (cover < 0.05) continue
+                drawRect(color.copy(alpha = (0.5 * cover).toFloat()), Offset(x0, y(hi)), Size(x1 - x0, y(lo) - y(hi)))
+            }
+            // Low and mid-level cloud above the chart (not the thin high cloud).
+            val above = p.heights.indices.filter { p.heights[it] > maxE && p.heights[it] < SkyModel.HIGH_CLOUD_M }.maxOfOrNull { p.cover[it] } ?: 0.0
+            if (above >= 0.05) drawRect(color.copy(alpha = (0.6 * above).toFloat()), Offset(x0, top), Size(x1 - x0, strip))
         }
     }
 }

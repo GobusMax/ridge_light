@@ -206,21 +206,21 @@ class SunResult(
     }
 
     /**
-     * Seconds of direct sun once clouds are taken into account: every stretch in terrain sun
-     * counts with the fraction [clearSky] gives for its place (metres along the route) and time.
-     * Null if [clearSky] has no answer for some sunny stretch (e.g. beyond the forecast).
+     * Seconds of terrain sun, each stretch counted with the [weight] given for its place (metres
+     * along the route) and time, e.g. 1 under clear sky and 0 under overcast. Null if [weight]
+     * has no answer for some sunny stretch (e.g. beyond the forecast).
      */
-    fun expectedSunSeconds(clearSky: (distance: Double, utcMillis: Long) -> Double?): Double? {
+    fun weightedSunSeconds(weight: (distance: Double, utcMillis: Long) -> Double?): Double? {
         var sum = 0.0
         for ((i, s) in samples.withIndex()) {
             if (s.light != Light.SUN) continue
             val step = route.steps[i]
-            val clear = clearSky((step.start.distance + step.end.distance) / 2, timeAt(schedule.midTime(i))) ?: return null
+            val clear = weight((step.start.distance + step.end.distance) / 2, timeAt(schedule.midTime(i))) ?: return null
             sum += schedule.stepSpan[i] * clear
         }
         for (b in breaks) for (p in b.pieces) {
             if (p.sample.light != Light.SUN) continue
-            val clear = clearSky(b.distance, timeAt((p.startSeconds + p.endSeconds) / 2)) ?: return null
+            val clear = weight(b.distance, timeAt((p.startSeconds + p.endSeconds) / 2)) ?: return null
             sum += (p.endSeconds - p.startSeconds) * clear
         }
         return sum
@@ -233,11 +233,13 @@ data class SweepEntry(
     val departureUtc: Long,
     val totals: Map<Light, Double>,
     val duration: Double,
-    /** Direct sun after clouds (see [SunResult.expectedSunSeconds]), if a forecast was given and covers it. */
-    val expectedSun: Double? = null,
+    /** Weighted terrain sun (see [SunResult.weightedSunSeconds]), if weights were given and cover it. */
+    val weightedSun: Double? = null,
 ) {
     val sunShare: Double get() = if (duration > 0) totals.getValue(Light.SUN) / duration else 0.0
-    val expectedShare: Double? get() = expectedSun?.let { if (duration > 0) it / duration else 0.0 }
+
+    /** [weightedSun] as a share of the terrain sun; null without weights or without sun. */
+    val weightedShareOfSun: Double? get() = weightedSun?.let { w -> totals.getValue(Light.SUN).takeIf { it > 0 }?.let { w / it } }
 }
 
 /**
@@ -306,12 +308,12 @@ class SunAnalyzer(
 
     /**
      * Totals for each departure; the same as [analyse] would give for each, but much cheaper.
-     * With [clearSky] (see [SunResult.expectedSunSeconds]) each entry also gets expected sun.
+     * With [sunWeight] (see [SunResult.weightedSunSeconds]) each entry also gets weighted sun.
      */
     fun sweep(
         schedule: Schedule,
         departures: List<Long>,
-        clearSky: ((distance: Double, utcMillis: Long) -> Double?)? = null,
+        sunWeight: ((distance: Double, utcMillis: Long) -> Double?)? = null,
     ): List<SweepEntry> {
         require(schedule.stepStart.size == route.steps.size) { "Schedule does not match route" }
         val n = route.steps.size
@@ -325,13 +327,13 @@ class SunAnalyzer(
         val kinds = Light.entries
         return departures.mapIndexed { k, t ->
             val totals = kinds.associateWith { 0.0 }.toMutableMap()
-            var expected: Double? = if (clearSky != null) 0.0 else null
+            var expected: Double? = if (sunWeight != null) 0.0 else null
             for (i in 0 until n) {
                 val light = kinds[lights[k * n + i].toInt()]
                 totals[light] = totals.getValue(light) + schedule.stepSpan[i]
                 if (light == Light.SUN && expected != null) {
                     val step = route.steps[i]
-                    val clear = clearSky!!((step.start.distance + step.end.distance) / 2, timeAt(schedule, t, i))
+                    val clear = sunWeight!!((step.start.distance + step.end.distance) / 2, timeAt(schedule, t, i))
                     expected = clear?.let { expected!! + schedule.stepSpan[i] * it }
                 }
             }
@@ -340,7 +342,7 @@ class SunAnalyzer(
                 val seconds = p.endSeconds - p.startSeconds
                 totals[light] = totals.getValue(light) + seconds
                 if (light == Light.SUN && expected != null) {
-                    val clear = clearSky!!(b.distance, t + ((p.startSeconds + p.endSeconds) / 2 * 1000).toLong())
+                    val clear = sunWeight!!(b.distance, t + ((p.startSeconds + p.endSeconds) / 2 * 1000).toLong())
                     expected = clear?.let { expected!! + seconds * it }
                 }
             }

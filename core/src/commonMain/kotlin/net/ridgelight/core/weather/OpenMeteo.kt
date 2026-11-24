@@ -16,8 +16,16 @@ object OpenMeteo {
     const val FORECAST_DAYS = 16
     const val PAST_DAYS = 92
 
-    private const val HOURLY = "temperature_2m,precipitation_probability,precipitation,weather_code," +
-        "cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_speed_10m,wind_gusts_10m"
+    /**
+     * Pressure levels for cloud profiles (about 150 m to 11.5 km). Only levels that the main
+     * models all provide: "best match" fills extra ones (875, 825 hPa…) from another model,
+     * which gives profiles that zig-zag between two forecasts.
+     */
+    val LEVELS = intArrayOf(1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200)
+
+    private val HOURLY = "temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover," +
+        "wind_speed_10m,wind_gusts_10m," +
+        LEVELS.joinToString(",") { "cloud_cover_${it}hPa,geopotential_height_${it}hPa" }
 
     /** A place to forecast for: [distance] metres along the route. */
     class Place(val distance: Double, val position: LatLon, val elevation: Double)
@@ -27,7 +35,7 @@ object OpenMeteo {
      * [maxPoints]. Their elevations are sent along so that temperatures fit the route rather
      * than the forecast model's smoothed terrain.
      */
-    fun places(route: SampledRoute, spacing: Double = 2_000.0, maxPoints: Int = 12): List<Place> {
+    fun places(route: SampledRoute, spacing: Double = 2_000.0, maxPoints: Int = 6): List<Place> {
         val nodes = route.nodes
         val length = nodes.last().distance
         val count = (ceil(length / spacing).toInt() + 1).coerceIn(2, maxPoints)
@@ -81,13 +89,20 @@ object OpenMeteo {
                 precipitation = at("precipitation", i),
                 weatherCode = (series("weather_code").getOrNull(i) as? Double)?.toInt() ?: -1,
                 cloudCover = at("cloud_cover", i, 0.01),
-                cloudLow = at("cloud_cover_low", i, 0.01),
-                cloudMid = at("cloud_cover_mid", i, 0.01),
-                cloudHigh = at("cloud_cover_high", i, 0.01),
+                clouds = profile(::at, i),
                 windSpeed = at("wind_speed_10m", i),
                 windGusts = at("wind_gusts_10m", i),
             )
         }
+    }
+
+    /** The levels with both height and cover, by height; null if fewer than three. */
+    private fun profile(at: (String, Int, Double) -> Double, i: Int): CloudProfile? {
+        val levels = LEVELS.map { at("geopotential_height_${it}hPa", i, 1.0) to at("cloud_cover_${it}hPa", i, 0.01) }
+            .filter { (h, c) -> h.isFinite() && c.isFinite() }
+            .sortedBy { it.first }
+        if (levels.size < 3) return null
+        return CloudProfile(DoubleArray(levels.size) { levels[it].first }, DoubleArray(levels.size) { levels[it].second })
     }
 
     private fun fmt(v: Double): String {

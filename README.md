@@ -17,12 +17,14 @@ The model in short:
    Alps) are used near the route and coarse ones (z11) for distant ridges.
 5. **Result.** Each step is direct sun, terrain shade, below the horizon, or unknown (missing
    terrain data).
-6. **Clouds.** With an hourly forecast (Open-Meteo, for a few places along the route), terrain
-   sun becomes *expected* sun: each sunny stretch counts with the share of sky the clouds leave
-   clear. Low and mid clouds block; high clouds count half; layers overlap at random.
+6. **Sky (on request).** An hourly forecast (Open-Meteo) gives cloud cover on pressure levels
+   from about 150 m to 11.5 km, for a few places along the route. For each stretch, at the
+   hiker's altitude and time, the sky is clear, thin high cloud, partly cloudy, overcast, or in
+   cloud or fog; a cloud layer just below marks "above the clouds". Terrain sun stays the
+   headline number; the sky is shown beside it, never multiplied into it.
 
-Trees, buildings and snow are not modelled; clouds only through the forecast, which covers
-16 days ahead.
+Trees, buildings and snow are not modelled. Forecasts cover 16 days ahead, and models place
+low fog less reliably than other cloud.
 
 ## Layout
 
@@ -65,7 +67,7 @@ R=cli/build/install/ridgelight/bin/ridgelight
 $R analyse "Ridge Light/assets/rigi.gpx" --date 2026-12-20 --start 10:00 --tz Europe/Zurich \
    --dem-dir "Ridge Light/assets/dem" --sweep --out /tmp/rigi-out
 # Light over one day at one point, and sunless weeks over a winter
-# A 45-minute break at km 2.5, and the forecast (hourly weather, sun after clouds)
+# A 45-minute break at km 2.5, and the forecast sky over each stretch
 $R analyse "Ridge Light/assets/rigi.gpx" --date 2026-11-24 --start 09:00 --tz Europe/Zurich \
    --break 2.5:45 --weather --sweep
 $R horizon --lat 46.0513 --lon 8.1933 --date 2026-12-21 --tz Europe/Rome --profile
@@ -86,9 +88,13 @@ date, start time and pace.
 - **Breaks.** "Add a break" (at a time of the current plan) or "Add a break here" (at the
   profile cursor). A break stays at its place when start time or pace change, and its light
   counts in the totals.
-- **Weather.** The forecast for where you are each hour (temperature at your altitude, clouds,
-  rain chance, wind), and direct sun after clouds. The start-time comparison then ranks by
-  that. The request sends a few points of the route to Open-Meteo.
+- **Sky.** Only when you tap "Check the sky" (the request sends a few points of the route to
+  Open-Meteo):
+  - forecast cloud drawn on the elevation profile, at the heights and times you pass;
+  - each stretch labelled with its sky, and a summary: terrain sun by sky, time in cloud or
+    fog, time above the clouds, and one line of temperature, rain and wind at your altitudes;
+  - a sky icon on each start time (the ranking stays by terrain sun);
+  - "Which day?": your plan on each forecast day, with terrain sun and the sky over it.
 - **Show on OsmAnd's map** imports one track per kind of light, coloured, with waypoints where
   the light changes and at breaks. They go to OsmAnd's `tracks/ridgelight-*.gpx` and are
   replaced on each run.
@@ -124,4 +130,5 @@ instead. The app explains either case.
   AWS Open Data). Sources include SRTM, GMTED, ETOPO1 and NED. See
   [attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
 - **Weather:** [Open-Meteo](https://open-meteo.com) forecast API (free, no key, CC BY 4.0),
-  using each region's best available models.
+  using each region's best available models. Only the standard pressure levels are requested:
+  "best match" fills the in-between ones from another model, which makes profiles zig-zag.

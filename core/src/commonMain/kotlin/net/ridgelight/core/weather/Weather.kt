@@ -3,11 +3,31 @@ package net.ridgelight.core.weather
 import net.ridgelight.core.geo.LatLon
 
 /**
+ * Cloud cover by height above sea level at one place and hour, from the forecast's pressure
+ * levels: [heights] in metres (ascending), [cover] 0..1 at each.
+ */
+class CloudProfile(val heights: DoubleArray, val cover: DoubleArray) {
+    init {
+        require(heights.size == cover.size && heights.isNotEmpty())
+    }
+
+    /** Cover at [height], linear between levels; the lowest level's below it, none above the top. */
+    fun coverAt(height: Double): Double {
+        if (height <= heights.first()) return cover.first()
+        if (height > heights.last()) return 0.0
+        val k = heights.indexOfFirst { it >= height }
+        val f = (height - heights[k - 1]) / (heights[k] - heights[k - 1])
+        return cover[k - 1] + (cover[k] - cover[k - 1]) * f
+    }
+}
+
+/**
  * One forecast hour at one place. Fractions are 0..1; NaN where the forecast has no value.
  *
  * @property temperature °C at the place's elevation.
  * @property precipitation mm in the preceding hour.
  * @property weatherCode WMO code (see [WeatherCodes]), -1 if unknown.
+ * @property cloudCover total cover of the sky, for when [clouds] is missing.
  * @property windSpeed km/h at 10 m; [windGusts] likewise.
  */
 class WeatherHour(
@@ -17,9 +37,7 @@ class WeatherHour(
     val precipitation: Double,
     val weatherCode: Int,
     val cloudCover: Double,
-    val cloudLow: Double,
-    val cloudMid: Double,
-    val cloudHigh: Double,
+    val clouds: CloudProfile?,
     val windSpeed: Double,
     val windGusts: Double,
 )
@@ -51,9 +69,8 @@ class RouteForecast(val points: List<ForecastPoint>) {
         return h.copy(temperature = h.temperature - LAPSE_RATE * dz)
     }
 
-    /** Expected share of direct sun from clouds at a place and time (see [SkyCover]), or null. */
-    fun clearSky(distance: Double, utcMillis: Long): Double? =
-        at(distance, utcMillis)?.let { SkyCover.clearFraction(it) }?.takeIf { it.isFinite() }
+    /** First and last forecast hour (UTC), over all places. */
+    val period: LongRange get() = points.minOf { it.hours.first().timeUtc }..points.maxOf { it.hours.last().timeUtc }
 
     private fun interpolate(a: WeatherHour, b: WeatherHour, t: Long): WeatherHour {
         if (a === b || b.timeUtc == a.timeUtc) return a
@@ -70,34 +87,27 @@ class RouteForecast(val points: List<ForecastPoint>) {
             mix(a.precipitation, b.precipitation),
             if (f < 0.5) a.weatherCode else b.weatherCode,
             mix(a.cloudCover, b.cloudCover),
-            mix(a.cloudLow, b.cloudLow),
-            mix(a.cloudMid, b.cloudMid),
-            mix(a.cloudHigh, b.cloudHigh),
+            mixClouds(a.clouds, b.clouds, f),
             mix(a.windSpeed, b.windSpeed),
             mix(a.windGusts, b.windGusts),
         )
     }
 
+    private fun mixClouds(a: CloudProfile?, b: CloudProfile?, f: Double): CloudProfile? {
+        if (a == null || b == null || a.heights.size != b.heights.size) return if (f < 0.5) a ?: b else b ?: a
+        return CloudProfile(
+            DoubleArray(a.heights.size) { a.heights[it] + (b.heights[it] - a.heights[it]) * f },
+            DoubleArray(a.cover.size) { a.cover[it] + (b.cover[it] - a.cover[it]) * f },
+        )
+    }
+
     private fun WeatherHour.copy(temperature: Double) = WeatherHour(
         timeUtc, temperature, precipitationProbability, precipitation, weatherCode,
-        cloudCover, cloudLow, cloudMid, cloudHigh, windSpeed, windGusts,
+        cloudCover, clouds, windSpeed, windGusts,
     )
 
     companion object {
         const val LAPSE_RATE = 0.0065
-    }
-}
-
-/**
- * How much direct sun clouds let through, as the expected share of time the sun is out.
- * Low and mid-level clouds block it; high clouds are often thin enough to see the sun through,
- * so they count half. Layers are assumed to overlap at random. Forecasts give cover per grid
- * cell, so this is a probability, not a promise for a given minute.
- */
-object SkyCover {
-    fun clearFraction(h: WeatherHour): Double {
-        if (h.cloudLow.isNaN() || h.cloudMid.isNaN() || h.cloudHigh.isNaN()) return 1 - h.cloudCover
-        return (1 - h.cloudLow) * (1 - h.cloudMid) * (1 - h.cloudHigh / 2)
     }
 }
 
@@ -126,4 +136,8 @@ object WeatherCodes {
         96, 99 -> "Thunderstorm with hail"
         else -> "Unknown"
     }
+
+    fun isSnow(code: Int) = code in setOf(71, 73, 75, 77, 85, 86)
+    fun isRain(code: Int) = code in 51..67 || code in 80..82
+    fun isThunder(code: Int) = code in setOf(95, 96, 99)
 }

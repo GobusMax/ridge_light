@@ -22,7 +22,7 @@ import net.ridgelight.core.route.Route
 import net.ridgelight.core.route.RouteException
 import net.ridgelight.core.route.SampledRoute
 import net.ridgelight.core.sun.SunTimes
-import net.ridgelight.core.weather.RouteForecast
+import net.ridgelight.core.weather.SkyModel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -53,7 +53,8 @@ Options:
                        or force track / terrain model
   --sweep              compare departures every 30 minutes through the day
   --break <km>:<min>   a break at that distance, e.g. 6.2:45 (repeatable)
-  --weather            fetch an Open-Meteo forecast: hourly weather and sun after clouds
+  --weather            fetch an Open-Meteo forecast: the sky over each stretch (clouds and fog
+                       at your altitude) and a weather summary
   --out <dir>          write one GPX per light class for OsmAnd
   --dem-dir <dir>      extra directory with {z}-{x}-{y}.png Terrarium tiles (repeatable)
   --offline            never download tiles
@@ -194,27 +195,26 @@ private fun analyse(opts: Options) {
     if (forecast != null) printWeather(result, forecast, local)
     System.err.println("  (light analysis: %.0f ms, %d steps)".format(ms, sampled.steps.size))
 
-    if (opts.flag("sweep")) sweep(analyzer, schedule, route, date, zone, start, forecast)
+    if (opts.flag("sweep")) sweep(analyzer, schedule, route, date, zone, start, forecast?.let { SkyModel.sunWeights(it, sampled) })
     opts.get("out")?.let { writeGpx(Path.of(it), result, gpx.name ?: "Route", local) }
 }
 
-private fun sweep(analyzer: SunAnalyzer, schedule: net.ridgelight.core.pace.Schedule, route: Route, date: LocalDate, zone: ZoneId, chosen: LocalTime, forecast: RouteForecast?) {
+private fun sweep(analyzer: SunAnalyzer, schedule: net.ridgelight.core.pace.Schedule, route: Route, date: LocalDate, zone: ZoneId, chosen: LocalTime, skyWeights: ((Double, Long) -> Double?)?) {
     val midnight = date.atStartOfDay(zone).toInstant().toEpochMilli()
     val day = SunTimes.day(route.start.lat, route.start.lon, midnight)
     val from = ((day.sunriseUtc ?: midnight) - 3_600_000L).let { it - Math.floorMod(it - midnight, 1_800_000L) }
     val to = (day.sunsetUtc ?: (midnight + 86_400_000L)) - 1_800_000L
     val t0 = System.nanoTime()
-    val entries = analyzer.sweep(schedule, departures(from, to, 30), forecast?.let { it::clearSky })
+    val entries = analyzer.sweep(schedule, departures(from, to, 30), skyWeights)
     val ms = (System.nanoTime() - t0) / 1e6
-    val withClouds = entries.all { it.expectedShare != null }
-    val best = entries.maxByOrNull { if (withClouds) it.expectedShare!! else it.sunShare }
+    val best = entries.maxByOrNull { it.sunShare }
     println()
-    println("  Departure comparison (sun share of the hike${if (withClouds) "; after forecast clouds" else ""}):")
+    println("  Departure comparison (sun share of the hike${if (skyWeights != null) "; sky over the sunny stretches" else ""}):")
     for (e in entries) {
         val t = Instant.ofEpochMilli(e.departureUtc).atZone(zone).toLocalTime()
         val bar = "█".repeat((e.sunShare * 20).roundToInt()).padEnd(20, '·')
         val mark = (if (t == chosen) " ← chosen" else "") + (if (e === best) " ★ most sun" else "")
-        val clouds = e.expectedShare?.let { " → %3d %%".format((it * 100).roundToInt()) } ?: ""
+        val clouds = e.weightedShareOfSun?.let { "  " + skyIcon(it) } ?: ""
         println("   %s  %s %3d %%%s%s".format(t.format(clock), bar, (e.sunShare * 100).roundToInt(), clouds, mark))
     }
     System.err.println("  (sweep: %.0f ms for %d departures)".format(ms, entries.size))

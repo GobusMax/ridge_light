@@ -32,7 +32,10 @@ import net.ridgelight.core.route.Route
 import net.ridgelight.core.route.RouteException
 import net.ridgelight.core.route.SampledRoute
 import net.ridgelight.core.sun.SunTimes
+import net.ridgelight.core.analysis.Light
 import net.ridgelight.core.weather.RouteForecast
+import net.ridgelight.core.weather.SkyModel
+import net.ridgelight.core.weather.SkyReport
 import net.ridgelight.core.weather.WeatherException
 import net.ridgelight.dem.TerrainTileCache
 import java.time.Instant
@@ -68,10 +71,19 @@ sealed interface Phase {
 
 data class RouteInfo(val name: String, val sampled: SampledRoute, val missingTiles: Int)
 
+/** The forecast, fetched only when the user asks ("Check the sky"). */
 sealed interface WeatherState {
+    data object Idle : WeatherState
     data object Loading : WeatherState
-    data class Ready(val forecast: RouteForecast) : WeatherState
+    data class Ready(val forecast: RouteForecast, val fetchedAt: Long) : WeatherState
     data class Unavailable(val message: String) : WeatherState
+}
+
+/** One day in the "which day" list: terrain sun for the planned start, and the sky over it. */
+data class DayEntry(val date: LocalDate, val totals: Map<Light, Double>, val duration: Double, val sunSeconds: Double, val skyWeightedSun: Double) {
+    val sunShare: Double get() = if (duration > 0) sunSeconds / duration else 0.0
+    /** Share of the terrain sun under a clear (or thinly clouded) sky. */
+    val clearShareOfSun: Double? get() = if (sunSeconds > 0) skyWeightedSun / sunSeconds else null
 }
 
 data class UiState(
@@ -80,9 +92,11 @@ data class UiState(
     val route: RouteInfo? = null,
     val result: SunResult? = null,
     val sweep: List<SweepEntry>? = null,
-    val weather: WeatherState? = null,
-    /** Direct sun after forecast clouds, when the forecast covers the hike. */
-    val expectedSun: Double? = null,
+    val weather: WeatherState = WeatherState.Idle,
+    /** The sky over the planned hike; null without a forecast or if it does not cover the date. */
+    val sky: SkyReport? = null,
+    /** Forecast days for the planned start, pace and breaks. */
+    val days: List<DayEntry>? = null,
     val osmandMessage: String? = null,
     val osmandInstalled: Boolean = false,
 )
@@ -106,8 +120,8 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
     private var analysisJob: Job? = null
     private val weatherClient = WeatherClient()
     private var weatherJob: Job? = null
-    private data class WeatherKey(val route: SampledRoute, val date: LocalDate, val zone: ZoneId)
-    private var weatherCache: Triple<WeatherKey, Long, RouteForecast>? = null
+    /** What the day list was computed for, so it is only redone when that changes. */
+    private var daysKey: List<Any?>? = null
 
     private val clock = DateTimeFormatter.ofPattern("HH:mm")
     fun localTime(utc: Long): String = Instant.ofEpochMilli(utc).atZone(_state.value.settings.zone).format(clock)
@@ -121,7 +135,7 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(
                 phase = Phase.Reading, route = null, result = null, sweep = null, osmandMessage = null,
-                weather = null, expectedSun = null, settings = it.settings.copy(breaks = emptyList()),
+                weather = WeatherState.Idle, sky = null, days = null, settings = it.settings.copy(breaks = emptyList()),
             )
         }
         loadJob = viewModelScope.launch {
@@ -143,7 +157,6 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
                 analyzer = newAnalyzer
                 val name = gpx.name ?: uri.lastPathSegment?.substringAfterLast('/')?.removeSuffix(".gpx") ?: "Route"
                 _state.update { it.copy(route = RouteInfo(name, sampled, loaded.missing.size), phase = Phase.Ready) }
-                fetchWeather()
                 analyse(withSweep = true)
             } catch (e: RouteException) {
                 _state.update { it.copy(phase = Phase.Failed(e.message ?: "Invalid route")) }
@@ -157,7 +170,6 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         val old = _state.value.settings
         _state.update { it.copy(settings = settings, osmandMessage = null) }
         val dayChanged = settings.date != old.date || settings.zone != old.zone
-        if (dayChanged) fetchWeather()
         analyse(withSweep = dayChanged || settings.paceFactor != old.paceFactor || settings.breaks != old.breaks)
     }
 
@@ -171,25 +183,23 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         update(s.copy(breaks = s.breaks - b))
     }
 
-    /** Loads the forecast for the route and day (kept for an hour), then re-runs the analysis with it. */
-    private fun fetchWeather() {
+    /**
+     * Fetches the forecast for the whole forecast period ("Check the sky"); the only time the app
+     * sends route points to the weather service. A forecast less than an hour old is reused.
+     */
+    fun checkSky(force: Boolean = false) {
         val route = _state.value.route?.sampled ?: return
-        val s = _state.value.settings
-        val key = WeatherKey(route, s.date, s.zone)
+        val current = _state.value.weather
+        if (!force && current is WeatherState.Ready && System.currentTimeMillis() - current.fetchedAt < 3_600_000L) return
         weatherJob?.cancel()
-        weatherCache?.takeIf { it.first == key && SystemClock.elapsedRealtime() - it.second < 3_600_000L }?.let { cached ->
-            _state.update { it.copy(weather = WeatherState.Ready(cached.third)) }
-            return
-        }
-        _state.update { it.copy(weather = WeatherState.Loading, expectedSun = null) }
+        _state.update { it.copy(weather = WeatherState.Loading) }
         weatherJob = viewModelScope.launch {
             val weather = try {
-                val forecast = weatherClient.fetch(route, s.date, s.zone)
-                weatherCache = Triple(key, SystemClock.elapsedRealtime(), forecast)
-                WeatherState.Ready(forecast)
+                WeatherState.Ready(weatherClient.fetch(route), System.currentTimeMillis())
             } catch (e: WeatherException) {
-                WeatherState.Unavailable(e.message ?: "No weather forecast.")
+                WeatherState.Unavailable(e.message ?: "No forecast.")
             }
+            if (_state.value.route?.sampled !== route) return@launch
             _state.update { it.copy(weather = weather) }
             if (weather is WeatherState.Ready) analyse(withSweep = true)
         }
@@ -201,34 +211,57 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         analysisJob?.cancel()
         if (withSweep) _state.update { it.copy(sweep = null) }
         val forecast = (_state.value.weather as? WeatherState.Ready)?.forecast
-        val clearSky: ((Double, Long) -> Double?)? = forecast?.let { f -> { d, t -> f.clearSky(d, t) } }
+        val skyWeights = forecast?.let { SkyModel.sunWeights(it, a.route) }
         analysisJob = viewModelScope.launch {
             val t0 = SystemClock.elapsedRealtime()
-            val (result, expected) = withContext(analysisThread) {
+            val (result, sky) = withContext(analysisThread) {
                 val walking = schedule?.takeIf { it.first === a && it.second == settings.paceFactor }?.third
                     ?: Din33466Pace(factor = settings.paceFactor).schedule(a.route).also { schedule = Triple(a, settings.paceFactor, it) }
                 val sch = walking.withBreaks(a.route, settings.breaks.map { Break(it.distance, it.minutes * 60.0) })
                 val r = a.analyse(sch, settings.departureUtc())
-                r to clearSky?.let { r.expectedSunSeconds(it) }
+                r to forecast?.let { SkyReport.of(r, it) }
             }
-            _state.update { it.copy(result = result, expectedSun = expected) }
+            _state.update { it.copy(result = result, sky = sky) }
             val t1 = SystemClock.elapsedRealtime()
             if (withSweep) {
-                val sweep = withContext(analysisThread) { sweep(a, result.schedule, settings, clearSky) }
+                val sweep = withContext(analysisThread) { sweep(a, result.schedule, settings, skyWeights) }
                 _state.update { it.copy(sweep = sweep) }
+            }
+            if (forecast != null && skyWeights != null) {
+                val key = listOf(forecast, a, settings.start, settings.zone, settings.paceFactor, settings.breaks)
+                if (key != daysKey) {
+                    _state.update { it.copy(days = null) }
+                    val days = withContext(analysisThread) { days(a, result.schedule, settings, forecast, skyWeights) }
+                    daysKey = key
+                    _state.update { it.copy(days = days) }
+                }
+            } else {
+                daysKey = null
+                _state.update { it.copy(days = null) }
             }
             Log.i(TAG, "analysis ${t1 - t0} ms" + if (withSweep) ", sweep ${SystemClock.elapsedRealtime() - t1} ms" else "")
         }
     }
 
     /** Departures every 30 minutes from an hour before sunrise until half an hour before sunset. */
-    private fun sweep(a: SunAnalyzer, schedule: Schedule, s: Settings, clearSky: ((Double, Long) -> Double?)?): List<SweepEntry> {
+    private fun sweep(a: SunAnalyzer, schedule: Schedule, s: Settings, skyWeights: ((Double, Long) -> Double?)?): List<SweepEntry> {
         val start = a.route.route.start
         val midnight = s.date.atStartOfDay(s.zone).toInstant().toEpochMilli()
         val day = SunTimes.day(start.lat, start.lon, midnight)
         val from = ((day.sunriseUtc ?: midnight) - 3_600_000L).let { it - Math.floorMod(it - midnight, 1_800_000L) }
         val to = (day.sunsetUtc ?: (midnight + 86_400_000L)) - 1_800_000L
-        return a.sweep(schedule, departures(from, to, 30), clearSky)
+        return a.sweep(schedule, departures(from, to, 30), skyWeights)
+    }
+
+    /** The planned hike on each day the forecast fully covers, from today on. */
+    private fun days(a: SunAnalyzer, schedule: Schedule, s: Settings, forecast: RouteForecast, skyWeights: (Double, Long) -> Double?): List<DayEntry> {
+        val today = LocalDate.now(s.zone)
+        val last = Instant.ofEpochMilli(forecast.period.last).atZone(s.zone).toLocalDate()
+        return generateSequence(today) { it.plusDays(1) }.takeWhile { it <= last }.mapNotNull { date ->
+            val r = a.analyse(schedule, ZonedDateTime.of(date, s.start, s.zone).toInstant().toEpochMilli())
+            val weighted = r.weightedSunSeconds(skyWeights) ?: return@mapNotNull null
+            DayEntry(date, r.totals, r.duration, r.seconds(Light.SUN), weighted)
+        }.toList()
     }
 
     fun showInOsmAnd(onNeedsPermission: (android.content.Intent) -> Unit) {

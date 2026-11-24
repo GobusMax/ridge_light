@@ -50,11 +50,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import net.ridgelight.app.DayEntry
 import net.ridgelight.app.Phase
 import net.ridgelight.app.PlannedBreak
 import net.ridgelight.app.RidgeLightViewModel
@@ -68,10 +70,13 @@ import net.ridgelight.core.analysis.SweepEntry
 import net.ridgelight.core.dem.Terrarium
 import net.ridgelight.core.gpx.LightStyle
 import net.ridgelight.core.weather.OpenMeteo
-import net.ridgelight.core.weather.RouteForecast
-import net.ridgelight.core.weather.WeatherHour
+import net.ridgelight.core.weather.Sky
+import net.ridgelight.core.weather.SkyAt
+import net.ridgelight.core.weather.SkyReport
+import net.ridgelight.core.weather.SkyStretch
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -108,12 +113,15 @@ fun RidgeLightApp(vm: RidgeLightViewModel, openFile: () -> Unit, showInOsmAnd: (
                 item { RouteHeader(route, state.result) }
                 item { SettingsCard(state.settings, state.result, vm::update, vm::addBreak, vm::removeBreak, vm::localTime) }
                 state.result?.let { result ->
-                    item { ResultCard(result, state.expectedSun) }
-                    item { WeatherCard(state.weather, result, vm::localTime) }
-                    item { ProfileCard(result, state.settings.zone, vm::localTime, vm::addBreak) }
+                    item { ResultCard(result) }
+                    item { SkyCard(state, vm::checkSky) }
+                    item { ProfileCard(result, state.sky, state.settings.zone, vm::localTime, vm::addBreak) }
                     item { OsmAndCard(state, showInOsmAnd) }
-                    item { StretchesCard(result, vm::localTime) }
+                    item { StretchesCard(result, state.sky, vm::localTime) }
                     item { DeparturesCard(state.sweep, state.settings, vm::localTime) { vm.update(state.settings.copy(start = it)) } }
+                    if (state.weather is WeatherState.Ready) {
+                        item { DaysCard(state.days, state.settings) { vm.update(state.settings.copy(date = it)) } }
+                    }
                 }
                 item { Footer() }
             }
@@ -321,17 +329,9 @@ private fun ZoneDialog(current: ZoneId, dismiss: () -> Unit, pick: (ZoneId) -> U
 }
 
 @Composable
-private fun ResultCard(result: SunResult, expectedSun: Double?) = Section {
+private fun ResultCard(result: SunResult) = Section {
     Text(LightStyle.duration(result.seconds(Light.SUN)), fontSize = 34.sp, fontWeight = FontWeight.Bold)
-    Text("${(result.sunShare * 100).roundToInt()} % of the hike in direct sun, if the sky is clear", style = MaterialTheme.typography.bodyMedium)
-    if (expectedSun != null) {
-        Text(
-            if (expectedSun < 60) "☁ With the forecast clouds: no direct sun expected"
-            else "☁ With the forecast clouds: about ${LightStyle.duration(expectedSun)} (${(100 * expectedSun / result.duration).roundToInt()} %)",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
+    Text("${(result.sunShare * 100).roundToInt()} % of the hike in direct sun, as far as the terrain goes", style = MaterialTheme.typography.bodyMedium)
     LightBar(result.totals)
     for (light in Light.entries) {
         val s = result.seconds(light)
@@ -346,14 +346,14 @@ private fun ResultCard(result: SunResult, expectedSun: Double?) = Section {
 }
 
 @Composable
-private fun ProfileCard(result: SunResult, zone: ZoneId, localTime: (Long) -> String, addBreak: (Double, Int) -> Unit) = Section("Along the way") {
+private fun ProfileCard(result: SunResult, sky: SkyReport?, zone: ZoneId, localTime: (Long) -> String, addBreak: (Double, Int) -> Unit) = Section("Along the way") {
     // Kept across re-analyses (e.g. after adding a break here), clamped to the new duration.
     var scrub by remember { mutableDoubleStateOf(0.0) }
     var breakDialog by remember { mutableStateOf(false) }
     val t = scrub.coerceIn(0.0, result.duration)
     val moment = result.momentAt(t)
     val sample = moment.sample
-    ProfileChart(result, moment.distance)
+    ProfileChart(result, moment.distance, sky?.columns)
     TimelineBar(result)
     Slider(value = t.toFloat(), onValueChange = { scrub = it.toDouble() }, valueRange = 0f..result.duration.toFloat().coerceAtLeast(1f))
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -361,9 +361,17 @@ private fun ProfileCard(result: SunResult, zone: ZoneId, localTime: (Long) -> St
         Spacer(Modifier.width(8.dp))
         val sun = if (sample.sun.apparentAltitude > 0) " · sun %.0f° up".format(sample.sun.apparentAltitude) else ""
         val doing = if (moment.breakIndex != null) "Break · " else ""
+        val skyAt = sky?.stretchAt(t)?.sky?.let { " · " + skyLabel(it) } ?: ""
         Text(
-            "${localTime(result.timeAt(t))} · km %.1f · $doing${LightStyle.label(sample.light)}$sun".format(moment.distance / 1000),
+            "${localTime(result.timeAt(t))} · km %.1f · $doing${LightStyle.label(sample.light)}$sun$skyAt".format(moment.distance / 1000),
             style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+    if (sky != null) {
+        Text(
+            "Grey: forecast cloud at the heights and times you pass. Weather models often misplace low fog.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
     // Not at the very start or end: a break there would only move the start or the arrival.
@@ -373,66 +381,116 @@ private fun ProfileCard(result: SunResult, zone: ZoneId, localTime: (Long) -> St
 }
 
 @Composable
-private fun WeatherCard(weather: WeatherState?, result: SunResult, localTime: (Long) -> String) = Section("Weather along the way") {
-    when (weather) {
-        null, WeatherState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
-        is WeatherState.Unavailable -> Text(weather.message, style = MaterialTheme.typography.bodySmall)
+private fun SkyCard(state: UiState, checkSky: (Boolean) -> Unit) = Section("Sky") {
+    val small = MaterialTheme.typography.bodySmall
+    when (val weather = state.weather) {
+        WeatherState.Idle -> {
+            Text("See the forecast clouds and fog at the heights you walk, and which days look best.", style = MaterialTheme.typography.bodyMedium)
+            Button(onClick = { checkSky(false) }) { Text("Check the sky") }
+            Text("This sends a few points of your route to Open-Meteo (open-meteo.com).", style = small, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        WeatherState.Loading -> {
+            Text("Loading the forecast…", style = small)
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        is WeatherState.Unavailable -> {
+            Text(weather.message, style = small, color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = { checkSky(true) }) { Text("Try again") }
+        }
         is WeatherState.Ready -> {
-            val rows = remember(result, weather) { hourlyWeather(result, weather.forecast) }
-            if (rows.isEmpty()) Text("The forecast does not cover this hike.", style = MaterialTheme.typography.bodySmall)
-            val small = MaterialTheme.typography.bodySmall
-            for ((time, w) in rows) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(localTime(time), Modifier.width(44.dp), style = small)
-                    Text(weatherIcon(w.weatherCode), Modifier.width(28.dp))
-                    Text(if (w.temperature.isNaN()) "–" else "${w.temperature.roundToInt()} °C", Modifier.width(48.dp), style = small)
-                    Text(percent("☁", w.cloudCover), Modifier.width(58.dp), style = small)
-                    Text(percent("☔", w.precipitationProbability), Modifier.width(58.dp), style = small)
-                    Text(if (w.windSpeed.isNaN()) "" else "%.0f km/h".format(w.windSpeed), Modifier.weight(1f), style = small, textAlign = TextAlign.End)
+            val sky = state.sky
+            if (sky == null) {
+                val last = Instant.ofEpochMilli(weather.forecast.period.last).atZone(state.settings.zone).toLocalDate()
+                Text(
+                    "No forecast for this date. Forecasts reach ${last.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))}; pick a day below.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                if (sky.sunSeconds > 0) {
+                    val parts = Sky.entries.filter { sky.sunBySky.getValue(it) >= 60 }
+                        .joinToString(" · ") { "${LightStyle.duration(sky.sunBySky.getValue(it))} ${skyLabel(SkyAt(it, false))}" }
+                    Text("☀ Your ${LightStyle.duration(sky.sunSeconds)} of terrain sun: $parts", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    Text("☀ The terrain hides the sun for the whole hike.", style = MaterialTheme.typography.bodyMedium)
                 }
+                if (sky.sunAboveClouds >= 60) Text("⛰ Above a sea of cloud for ${LightStyle.duration(sky.sunAboveClouds)} of it", style = MaterialTheme.typography.bodyMedium)
+                if (sky.inCloudSeconds >= 60) {
+                    val where = sky.inCloudRanges.joinToString(", ") { "km %.1f–%.1f".format(it.start / 1000, it.endInclusive / 1000) }
+                    Text("🌫 In cloud or fog for ${LightStyle.duration(sky.inCloudSeconds)} ($where)", style = MaterialTheme.typography.bodyMedium)
+                }
+                Text("🌡 ${weatherLine(sky)}", style = MaterialTheme.typography.bodyMedium)
             }
-            Text(
-                "For where you are each hour; temperatures at your altitude. Clouds turn terrain sun into expected sun.",
-                style = small,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val at = Instant.ofEpochMilli(weather.fetchedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+                Text("Forecast from $at · ${OpenMeteo.ATTRIBUTION}", Modifier.weight(1f), style = small, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { checkSky(true) }) { Text("Refresh") }
+            }
         }
     }
 }
 
-private fun percent(icon: String, fraction: Double) = if (fraction.isNaN()) "" else "$icon ${(fraction * 100).roundToInt()} %"
-
-/** The forecast at the hiker's place at departure and at each full hour until arrival. */
-private fun hourlyWeather(result: SunResult, forecast: RouteForecast): List<Pair<Long, WeatherHour>> {
-    val start = result.departureUtc
-    val end = result.timeAt(result.duration)
-    val times = buildList {
-        add(start)
-        var t = (start / 3_600_000L + 1) * 3_600_000L
-        while (t <= end) {
-            add(t)
-            t += 3_600_000L
-        }
+private fun weatherLine(sky: SkyReport): String {
+    val temp = if (sky.minTemperature.isNaN()) "" else "${sky.minTemperature.roundToInt()} to ${sky.maxTemperature.roundToInt()} °C at your altitudes · "
+    val wet = listOfNotNull("rain".takeIf { sky.rain }, "snow".takeIf { sky.snow }, "thunderstorms".takeIf { sky.thunder })
+    val precip = when {
+        wet.isNotEmpty() -> wet.joinToString(", ") + " possible"
+        sky.maxRainChance.isNaN() -> "dry"
+        else -> "dry (rain chance up to ${(sky.maxRainChance * 100).roundToInt()} %)"
     }
-    val nodes = result.route.nodes
-    return times.mapNotNull { t ->
-        val m = result.momentAt((t - start) / 1000.0)
-        val elevation = nodes.minBy { abs(it.distance - m.distance) }.elevation
-        forecast.at(m.distance, t, elevation)?.let { t to it }
-    }
+    val wind = if (sky.maxWind.isNaN()) "" else " · wind up to ${sky.maxWind.roundToInt()} km/h" + if (sky.maxGusts.isNaN()) "" else ", gusts ${sky.maxGusts.roundToInt()}"
+    return (temp + precip + wind).replaceFirstChar { it.uppercase() }
 }
 
-private fun weatherIcon(code: Int) = when (code) {
-    0 -> "☀️"
-    1 -> "🌤️"
-    2 -> "⛅"
-    3 -> "☁️"
-    45, 48 -> "🌫️"
-    51, 53, 55, 56, 57, 61, 63, 65, 66, 67 -> "🌧️"
-    71, 73, 75, 77, 85, 86 -> "🌨️"
-    80, 81, 82 -> "🌦️"
-    95, 96, 99 -> "⛈️"
-    else -> "·"
+/** "clear sky", "thin high cloud", … for a sky as seen from the trail. */
+private fun skyLabel(s: SkyAt): String = when (s.sky) {
+    Sky.CLEAR -> if (s.cloudsBelow) "clear sky, above the clouds" else "clear sky"
+    Sky.THIN_CLOUD -> if (s.cloudsBelow) "thin high cloud, above the clouds" else "thin high cloud"
+    Sky.PARTLY_CLOUDY -> "partly cloudy"
+    Sky.OVERCAST -> "overcast"
+    Sky.IN_CLOUD -> "in cloud or fog"
+}
+
+/** ☀ when most of the sunny stretches are under clear sky, ⛅ for some, ☁ for few. */
+private fun skyIcon(clearShareOfSun: Double) = when {
+    clearShareOfSun >= 0.7 -> "☀️"
+    clearShareOfSun >= 0.3 -> "⛅"
+    else -> "☁️"
+}
+
+@Composable
+private fun DaysCard(days: List<DayEntry>?, settings: Settings, pick: (LocalDate) -> Unit) = Section("Which day?") {
+    if (days == null) {
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+        return@Section
+    }
+    Text(
+        "Your start, pace and breaks on each forecast day. Bar and % from the terrain; icon: the forecast sky over the sunny stretches. Tap a day to use it.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    val today = LocalDate.now(settings.zone)
+    val best = days.maxByOrNull { it.skyWeightedSun }?.takeIf { it.skyWeightedSun >= 600 }
+    val dayFormat = DateTimeFormatter.ofPattern("EEE d MMM")
+    for (d in days) {
+        val chosen = d.date == settings.date
+        // Forecasts lose skill after about a week.
+        val alpha = if (d.date > today.plusDays(7)) 0.55f else 1f
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (chosen) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0f), RoundedCornerShape(6.dp))
+                .clickable { pick(d.date) }
+                .padding(horizontal = 6.dp, vertical = 6.dp)
+                .alpha(alpha),
+        ) {
+            Text(d.date.format(dayFormat), Modifier.width(104.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
+            LightBar(d.totals, Modifier.weight(1f).height(10.dp))
+            Text("${(d.sunShare * 100).roundToInt()} %", Modifier.width(44.dp).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall)
+            Text(d.clearShareOfSun?.let(::skyIcon) ?: "", Modifier.width(28.dp).padding(start = 4.dp))
+            Text(if (d === best) "★" else "", Modifier.width(16.dp), color = MaterialTheme.colorScheme.secondary)
+        }
+    }
+    Text("★ most sun under a clear sky. Days more than a week ahead are greyed: their forecast is rough.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -443,14 +501,18 @@ private fun OsmAndCard(state: UiState, showInOsmAnd: () -> Unit) = Section {
 }
 
 @Composable
-private fun StretchesCard(result: SunResult, localTime: (Long) -> String) = Section("Stretches") {
-    for (run in result.timeline) {
+private fun StretchesCard(result: SunResult, sky: SkyReport?, localTime: (Long) -> String) = Section("Stretches") {
+    val rows = sky?.stretches ?: result.timeline.map { SkyStretch(it, null) }
+    for ((run, skyAt) in rows.map { it.run to it.sky }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             val color = lightColor(run.light).let { if (run.isBreak) it.copy(alpha = 0.5f) else it }
             Box(Modifier.size(width = 4.dp, height = 28.dp).background(color, RoundedCornerShape(2.dp)))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                val what = (if (run.isBreak) "☕ Break · " else "") + LightStyle.label(run.light)
+                // Under overcast or in fog, the terrain lets the sun through but the clouds don't.
+                val hidden = skyAt?.sky == Sky.OVERCAST || skyAt?.sky == Sky.IN_CLOUD
+                val light = if (run.light == Light.SUN && hidden) "Terrain sun" else LightStyle.label(run.light)
+                val what = (if (run.isBreak) "☕ Break · " else "") + light + (skyAt?.let { " · " + skyLabel(it) } ?: "")
                 Text("${localTime(result.timeAt(run.startSeconds))}–${localTime(result.timeAt(run.endSeconds))} · $what", style = MaterialTheme.typography.bodyMedium)
                 val where = if (run.isBreak) "at km %.1f".format(run.startDistance / 1000) else "km %.1f–%.1f".format(run.startDistance / 1000, run.endDistance / 1000)
                 Text("$where · ${LightStyle.duration(run.seconds)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -466,14 +528,11 @@ private fun DeparturesCard(sweep: List<SweepEntry>?, settings: Settings, localTi
             LinearProgressIndicator(Modifier.fillMaxWidth())
             return@Section
         }
-        val withClouds = sweep.isNotEmpty() && sweep.all { it.expectedShare != null }
-        val share = { e: SweepEntry -> if (withClouds) e.expectedShare!! else e.sunShare }
-        // Ties (e.g. overcast all day) go to the most terrain sun; no star if there is no sun to speak of.
-        val best = sweep.maxWithOrNull(compareBy<SweepEntry>({ (share(it) * 100).roundToInt() }, { it.sunShare }))
-            ?.takeIf { share(it) >= 0.01 }
+        val withSky = sweep.any { it.weightedSun != null }
+        val best = sweep.maxByOrNull { it.sunShare }?.takeIf { it.sunShare >= 0.01 }
         Text(
-            if (withClouds) "Same route, pace and breaks. Sun share with the forecast clouds; terrain-only share in grey. Tap a time to use it."
-            else "Same route, pace and breaks. Tap a time to use it.",
+            "Same route, pace and breaks. Tap a time to use it." +
+                if (withSky) " Icon: the forecast sky over that start's sunny stretches." else "",
             style = MaterialTheme.typography.bodySmall,
         )
         for (e in sweep) {
@@ -489,10 +548,8 @@ private fun DeparturesCard(sweep: List<SweepEntry>?, settings: Settings, localTi
             ) {
                 Text(localTime(e.departureUtc), Modifier.width(52.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
                 LightBar(e.totals, Modifier.weight(1f).height(10.dp))
-                if (withClouds) {
-                    Text("${(e.sunShare * 100).roundToInt()} %", Modifier.width(44.dp).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("${(share(e) * 100).roundToInt()} %", Modifier.width(44.dp).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text("${(e.sunShare * 100).roundToInt()} %", Modifier.width(52.dp).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall)
+                if (withSky) Text(e.weightedShareOfSun?.let(::skyIcon) ?: "", Modifier.width(28.dp))
                 Text(if (e === best) "★" else "", Modifier.width(16.dp), color = MaterialTheme.colorScheme.secondary)
             }
         }
@@ -502,9 +559,8 @@ private fun DeparturesCard(sweep: List<SweepEntry>?, settings: Settings, localTi
 private fun Footer() {
     Spacer(Modifier.height(4.dp))
     Text(
-        "Sun is estimated from the terrain; trees, buildings and snow are not modelled. With a forecast, its clouds turn that into expected sun. " +
-            "Walking times use the rule behind hiking-sign times (DIN 33466). ${Terrarium.ATTRIBUTION}. " +
-            "${OpenMeteo.ATTRIBUTION}; the forecast request contains a few points of the route.",
+        "Sun is estimated from the terrain; trees, buildings and snow are not modelled. Clouds come from the forecast, only when you check the sky. " +
+            "Walking times use the rule behind hiking-sign times (DIN 33466). ${Terrarium.ATTRIBUTION}. ${OpenMeteo.ATTRIBUTION}.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

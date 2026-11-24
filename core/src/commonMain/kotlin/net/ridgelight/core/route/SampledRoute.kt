@@ -56,6 +56,21 @@ class SampledRoute(
 ) {
     val length: Double get() = route.length
 
+    /** Smoothed elevation at [distance] metres along the route (terrain height where unknown). */
+    fun elevationAt(distance: Double): Double {
+        var lo = 0
+        var hi = nodes.size - 1
+        while (hi - lo > 1) {
+            val m = (lo + hi) ushr 1
+            if (nodes[m].distance <= distance) lo = m else hi = m
+        }
+        val a = nodes[lo]
+        val b = nodes[hi]
+        val f = if (b.distance > a.distance) ((distance - a.distance) / (b.distance - a.distance)).coerceIn(0.0, 1.0) else 0.0
+        fun e(n: RouteNode) = if (n.elevation.isFinite()) n.elevation else n.ground
+        return e(a) + (e(b) - e(a)) * f
+    }
+
     /** Total climb and descent in metres, from the smoothed elevations. */
     val ascent: Double by lazy { climb(1.0) }
     val descent: Double by lazy { climb(-1.0) }
