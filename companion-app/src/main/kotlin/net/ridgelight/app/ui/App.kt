@@ -30,8 +30,9 @@ fun RidgeLightApp(vm: RidgeLightViewModel, openFile: () -> Unit, showInOsmAnd: (
         }
     }
     val shown = when {
+        page == Page.ABOUT -> page
         state.result == null -> Page.MAIN
-        !state.skyEnabled && (page == Page.DAYS || page == Page.SKY) -> Page.MAIN
+        page == Page.DAYS && !state.cloudsEnabled -> Page.MAIN
         else -> page
     }
     BackHandler(enabled = shown != Page.MAIN) { page = Page.MAIN }
@@ -45,14 +46,12 @@ fun RidgeLightApp(vm: RidgeLightViewModel, openFile: () -> Unit, showInOsmAnd: (
         },
         label = "page",
     ) { p ->
-        val result = state.result
         when {
-            p == Page.MAIN || result == null ->
+            p == Page.ABOUT -> AboutScreen(back)
+            p == Page.MAIN || state.result == null ->
                 MainScreen(state, vm, scrub, showHint = !dragged, onScrub, openFile, showInOsmAnd) { page = it }
-            p == Page.STRETCHES -> StretchesScreen(state, result, scrub, onScrub, vm::localTime, back)
             p == Page.START_TIMES -> StartTimesScreen(state, vm::localTime, { vm.update(state.settings.copy(start = it)) }, back)
-            p == Page.DAYS -> DaysScreen(state, { vm.update(state.settings.copy(date = it)) }, vm::checkSky, back)
-            else -> SkyScreen(state, result, scrub, onScrub, vm::checkSky, vm::setSkyEnabled, { page = Page.DAYS }, back)
+            else -> DaysScreen(state, { vm.update(state.settings.copy(date = it)) }, { vm.loadClouds(force = true) }, back)
         }
     }
 }

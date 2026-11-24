@@ -24,7 +24,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) handle(intent)
+        // A track shared or opened from another app wins; otherwise the last one comes back.
+        val opened = savedInstanceState == null && handle(intent)
+        if (!opened) vm.reopenLast()
         setContent {
             RidgeLightTheme {
                 RidgeLightApp(
@@ -46,7 +48,8 @@ class MainActivity : ComponentActivity() {
         vm.refreshOsmAnd()
     }
 
-    private fun handle(intent: Intent?) {
+    /** Opens the track [intent] carries; false if it carries none. */
+    private fun handle(intent: Intent?): Boolean {
         val uri: Uri? = when (intent?.action) {
             Intent.ACTION_SEND -> if (Build.VERSION.SDK_INT >= 33) {
                 intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
@@ -58,5 +61,6 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
         uri?.let(vm::open)
+        return uri != null
     }
 }

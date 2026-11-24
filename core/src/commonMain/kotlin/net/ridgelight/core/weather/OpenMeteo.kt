@@ -7,8 +7,9 @@ import kotlin.math.ceil
 class WeatherException(message: String) : Exception(message)
 
 /**
- * Hourly forecasts from Open-Meteo (https://open-meteo.com): free, no key, up to 16 days ahead
- * and about three months back. Requests carry the coordinates of a few places on the route.
+ * Hourly cloud forecasts from Open-Meteo (https://open-meteo.com): free, no key, up to 16 days
+ * ahead and about three months back. Requests carry only the coordinates of a few places on the
+ * route.
  * The platform fetches [url]; this object only builds the request and reads the answer.
  */
 object OpenMeteo {
@@ -23,18 +24,12 @@ object OpenMeteo {
      */
     val LEVELS = intArrayOf(1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200)
 
-    private val HOURLY = "temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover," +
-        "wind_speed_10m,wind_gusts_10m," +
-        LEVELS.joinToString(",") { "cloud_cover_${it}hPa,geopotential_height_${it}hPa" }
+    private val HOURLY = "cloud_cover," + LEVELS.joinToString(",") { "cloud_cover_${it}hPa,geopotential_height_${it}hPa" }
 
     /** A place to forecast for: [distance] metres along the route. */
-    class Place(val distance: Double, val position: LatLon, val elevation: Double)
+    class Place(val distance: Double, val position: LatLon)
 
-    /**
-     * Places about every [spacing] metres along the route, start and end included, at most
-     * [maxPoints]. Their elevations are sent along so that temperatures fit the route rather
-     * than the forecast model's smoothed terrain.
-     */
+    /** Places about every [spacing] metres along the route, start and end included, at most [maxPoints]. */
     fun places(route: SampledRoute, spacing: Double = 2_000.0, maxPoints: Int = 6): List<Place> {
         val nodes = route.nodes
         val length = nodes.last().distance
@@ -42,8 +37,7 @@ object OpenMeteo {
         return List(count) { k ->
             val d = length * k / (count - 1)
             val node = nodes.minBy { kotlin.math.abs(it.distance - d) }
-            val elevation = if (node.elevation.isFinite()) node.elevation else node.ground
-            Place(node.distance, node.position, elevation)
+            Place(node.distance, node.position)
         }
     }
 
@@ -52,9 +46,8 @@ object OpenMeteo {
         append("https://api.open-meteo.com/v1/forecast")
         append("?latitude=").append(places.joinToString(",") { fmt(it.position.lat) })
         append("&longitude=").append(places.joinToString(",") { fmt(it.position.lon) })
-        append("&elevation=").append(places.joinToString(",") { if (it.elevation.isFinite()) it.elevation.toInt().toString() else "nan" })
         append("&hourly=").append(HOURLY)
-        append("&timezone=GMT&timeformat=unixtime&wind_speed_unit=kmh")
+        append("&timezone=GMT&timeformat=unixtime")
         append("&start_date=").append(startDate).append("&end_date=").append(endDate)
     }
 
@@ -72,7 +65,7 @@ object OpenMeteo {
             else -> throw WeatherException("Unexpected weather data")
         }
         if (results.size != places.size) throw WeatherException("Expected ${places.size} forecasts, got ${results.size}")
-        return RouteForecast(places.mapIndexed { i, place -> ForecastPoint(place.distance, place.position, place.elevation, hours(results[i])) })
+        return RouteForecast(places.mapIndexed { i, place -> ForecastPoint(place.distance, place.position, hours(results[i])) })
     }
 
     private fun hours(result: Any?): List<WeatherHour> {
@@ -82,17 +75,7 @@ object OpenMeteo {
         fun at(name: String, i: Int, scale: Double = 1.0): Double = ((series(name).getOrNull(i) as? Double) ?: Double.NaN) * scale
         return time.indices.mapNotNull { i ->
             val t = time[i] as? Double ?: return@mapNotNull null
-            WeatherHour(
-                timeUtc = (t * 1000).toLong(),
-                temperature = at("temperature_2m", i),
-                precipitationProbability = at("precipitation_probability", i, 0.01),
-                precipitation = at("precipitation", i),
-                weatherCode = (series("weather_code").getOrNull(i) as? Double)?.toInt() ?: -1,
-                cloudCover = at("cloud_cover", i, 0.01),
-                clouds = profile(::at, i),
-                windSpeed = at("wind_speed_10m", i),
-                windGusts = at("wind_gusts_10m", i),
-            )
+            WeatherHour(timeUtc = (t * 1000).toLong(), cloudCover = at("cloud_cover", i, 0.01), clouds = profile(::at, i))
         }
     }
 

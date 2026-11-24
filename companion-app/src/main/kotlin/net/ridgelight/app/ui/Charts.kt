@@ -25,165 +25,47 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import net.ridgelight.core.analysis.Light
 import net.ridgelight.core.analysis.SunResult
 import net.ridgelight.core.weather.CloudColumn
+import net.ridgelight.core.weather.SkyLight
 import net.ridgelight.core.weather.SkyModel
+import net.ridgelight.core.weather.SkyReport
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Horizontal bar split by time spent in each kind of light. */
+/** Horizontal bar split into [segments] (colour, amount), in order. */
 @Composable
-fun LightBar(totals: Map<Light, Double>, modifier: Modifier = Modifier.fillMaxWidth().height(14.dp)) {
-    val total = totals.values.sum()
+fun SegmentBar(segments: List<Pair<Color, Double>>, modifier: Modifier = Modifier.fillMaxWidth().height(10.dp)) {
+    val total = segments.sumOf { it.second }
+    val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)
     Canvas(modifier) {
-        if (total <= 0) return@Canvas
         val r = CornerRadius(size.height / 2)
-        drawRoundRect(lightColor(Light.UNKNOWN).copy(alpha = 0.25f), cornerRadius = r)
+        drawRoundRect(track, cornerRadius = r)
+        if (total <= 0) return@Canvas
         clipRect {
             var x = 0f
-            for (light in Light.entries) {
-                val w = (totals[light] ?: 0.0).div(total).toFloat() * size.width
+            for ((color, amount) in segments) {
+                val w = (amount / total).toFloat() * size.width
                 if (w <= 0f) continue
-                drawRect(lightColor(light), Offset(x, 0f), Size(w, size.height))
+                drawRect(color, Offset(x, 0f), Size(w, size.height))
                 x += w
             }
         }
     }
 }
 
-/**
- * Light over the hike's time, walking and breaks (breaks drawn lighter). With [onScrub], tapping
- * or dragging along it picks a moment (seconds after departure), marked at [cursorSeconds].
- */
-@Composable
-fun TimelineBar(
-    result: SunResult,
-    modifier: Modifier = Modifier.fillMaxWidth().height(10.dp),
-    cursorSeconds: Double? = null,
-    onScrub: ((Double) -> Unit)? = null,
-) {
-    val cursorColor = MaterialTheme.colorScheme.onSurface
-    val scrub by rememberUpdatedState(onScrub)
-    val d = result.duration
-    val input = if (onScrub == null) Modifier else Modifier.scrubbing(result) { x, width -> scrub?.invoke((x / width).coerceIn(0f, 1f) * d) }
-    Canvas(modifier.then(input)) {
-        if (d <= 0) return@Canvas
-        val barHeight = min(size.height, 10.dp.toPx())
-        val top = (size.height - barHeight) / 2
-        for (run in result.timeline) {
-            val x0 = (run.startSeconds / d).toFloat() * size.width
-            val x1 = (run.endSeconds / d).toFloat() * size.width
-            val color = lightColor(run.light).let { if (run.isBreak) it.copy(alpha = 0.5f) else it }
-            drawRect(color, Offset(x0, top), Size(max(1f, x1 - x0), barHeight))
-        }
-        cursorSeconds?.let {
-            val x = (it / d).toFloat().coerceIn(0f, 1f) * size.width
-            drawLine(cursorColor, Offset(x, 0f), Offset(x, size.height), 2.dp.toPx(), StrokeCap.Round)
-        }
-    }
-}
-
-/**
- * Elevation profile coloured by the light at the time each stretch is reached, with a cursor at
- * [cursorDistance] metres. With [clouds], the forecast cloud at each height is drawn in grey
- * behind it, as it will be when the hiker passes. With [onScrub], tapping or dragging along the
- * profile picks the moment the hiker passes that point (seconds after departure). [highlight]
- * shades a part of the route (metres); [hint] is written faintly in the corner.
- */
-@Composable
-fun ProfileChart(
-    result: SunResult,
-    cursorDistance: Double?,
-    clouds: List<CloudColumn>? = null,
-    modifier: Modifier = Modifier.fillMaxWidth().height(if (clouds != null) 180.dp else 150.dp),
-    onScrub: ((Double) -> Unit)? = null,
-    highlight: ClosedFloatingPointRange<Double>? = null,
-    hint: String? = null,
-) {
-    val measurer = rememberTextMeasurer()
-    val axis = MaterialTheme.colorScheme.onSurfaceVariant
-    val cursorColor = MaterialTheme.colorScheme.onSurface
-    val cursorFill = MaterialTheme.colorScheme.surface
-    val highlightColor = MaterialTheme.colorScheme.primary
-    val nodes = result.route.nodes
-    val elevations = nodes.map { it.elevation }.filter { it.isFinite() }
-    if (elevations.isEmpty()) return
-    val minE = elevations.min()
-    val routeTop = max(elevations.max(), minE + 50)
-    // With clouds, leave room above the route to show what hangs over it.
-    val maxE = if (clouds != null) routeTop + max(300.0, 0.3 * (routeTop - minE)) else routeTop
-    val length = result.route.length
-    val cloudColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val scrub by rememberUpdatedState(onScrub)
-    val input = if (onScrub == null) Modifier else Modifier.scrubbing(result) { x, width ->
-        val left = 44.dp.toPx()
-        val right = width - 4.dp.toPx()
-        val d = ((x - left) / (right - left)).coerceIn(0f, 1f) * length
-        scrub?.invoke(result.secondsAt(d))
-    }
-
-    Canvas(modifier.then(input)) {
-        val left = 44.dp.toPx()
-        val bottom = size.height - 18.dp.toPx()
-        val top = 6.dp.toPx()
-        val right = size.width - 4.dp.toPx()
-        fun x(d: Double) = left + (right - left) * (d / length).toFloat()
-        fun y(e: Double) = bottom - (bottom - top) * ((e - minE) / (maxE - minE)).toFloat()
-
-        clouds?.let { drawClouds(it, cloudColor, minE, maxE, left, right, top, bottom, ::x) }
-        highlight?.let { h ->
-            val x0 = x(h.start)
-            drawRect(highlightColor.copy(alpha = 0.12f), Offset(x0, top), Size(max(2f, x(h.endInclusive) - x0), bottom - top))
-        }
-        label(measurer, "${maxE.roundToInt()} m", Offset(0f, top), axis)
-        label(measurer, "${minE.roundToInt()} m", Offset(0f, bottom - 14.sp.toPx()), axis)
-        label(measurer, "0 km", Offset(left, bottom + 2.dp.toPx()), axis)
-        val end = "%.1f km".format(length / 1000)
-        label(measurer, end, Offset(right - measurer.measure(end, TextStyle(fontSize = 11.sp)).size.width, bottom + 2.dp.toPx()), axis)
-        hint?.let { label(measurer, it, Offset(left + 6.dp.toPx(), top), axis.copy(alpha = 0.8f)) }
-
-        for ((i, step) in result.route.steps.withIndex()) {
-            val a = step.start
-            val b = step.end
-            if (!a.elevation.isFinite() || !b.elevation.isFinite()) continue
-            val color = lightColor(result.samples[i].light)
-            val area = Path().apply {
-                moveTo(x(a.distance), bottom)
-                lineTo(x(a.distance), y(a.elevation))
-                lineTo(x(b.distance), y(b.elevation))
-                lineTo(x(b.distance), bottom)
-                close()
-            }
-            drawPath(area, color.copy(alpha = 0.28f))
-            drawLine(color, Offset(x(a.distance), y(a.elevation)), Offset(x(b.distance), y(b.elevation)), 2.5.dp.toPx(), StrokeCap.Round)
-        }
-        drawLine(axis.copy(alpha = 0.5f), Offset(left, bottom), Offset(right, bottom), 1.dp.toPx())
-
-        // Breaks: a ring in the colour of the light most of the break is spent in.
-        for (b in result.breaks) {
-            val node = nodes[b.stop.node]
-            if (!node.elevation.isFinite()) continue
-            val main = b.pieces.groupBy { it.sample.light }.maxBy { (_, ps) -> ps.sumOf { it.endSeconds - it.startSeconds } }.key
-            val at = Offset(x(node.distance), y(node.elevation))
-            drawCircle(lightColor(main), 6.dp.toPx(), at)
-            drawCircle(cursorColor, 6.dp.toPx(), at, style = Stroke(1.5.dp.toPx()))
-        }
-
-        cursorDistance?.let { d ->
-            val cx = x(d)
-            drawLine(cursorColor, Offset(cx, top), Offset(cx, bottom), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
-            val e = result.route.elevationAt(d)
-            if (e.isFinite()) {
-                drawCircle(cursorColor, 6.dp.toPx(), Offset(cx, y(e)))
-                drawCircle(cursorFill, 3.dp.toPx(), Offset(cx, y(e)))
-            }
-        }
-    }
-}
+/** Combined totals as segments, in the order of [SkyLight]. */
+fun segments(totals: Map<SkyLight, Double>): List<Pair<Color, Double>> =
+    SkyLight.entries.map { skyLightColor(it) to (totals[it] ?: 0.0) }
 
 /**
  * Small columns side by side, heights 0..1 from [values]; [selected] is drawn with a mark under
@@ -215,8 +97,164 @@ fun MiniColumns(
     }
 }
 
+private val LEFT = 44.dp
+private val RIGHT = 4.dp
+private val TOP = 6.dp
+private val BAR = 10.dp
+private val BAR_GAP = 4.dp
+private val AXIS = 20.dp
+private val SNAP = 10.dp
+
+/**
+ * Elevation profile coloured by the light at the time each part is reached: terrain and clouds
+ * combined when there is a [sky] report, terrain alone otherwise. With [sky], two bars under it
+ * on the same x-axis show the causes: the terrain's light and the clouds above the hiker; the
+ * forecast cloud at each height is drawn faintly behind the profile. Along the bottom, the
+ * places reached at each full hour.
+ *
+ * Tapping or dragging anywhere picks the moment the hiker passes that point ([onScrub], seconds
+ * after departure); near a break it snaps to the break. [highlight] shades a part of the route.
+ */
+@Composable
+fun ProfileChart(
+    result: SunResult,
+    sky: SkyReport?,
+    zone: ZoneId,
+    cursorSeconds: Double,
+    onScrub: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+    highlight: ClosedFloatingPointRange<Double>? = null,
+    hint: String? = null,
+) {
+    val measurer = rememberTextMeasurer()
+    val axis = MaterialTheme.colorScheme.onSurfaceVariant
+    val cursorColor = MaterialTheme.colorScheme.onSurface
+    val cursorFill = MaterialTheme.colorScheme.surface
+    val highlightColor = MaterialTheme.colorScheme.primary
+    val cloudColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
+    val nodes = result.route.nodes
+    val elevations = nodes.map { it.elevation }.filter { it.isFinite() }
+    if (elevations.isEmpty()) return
+    val minE = elevations.min()
+    val routeTop = max(elevations.max(), minE + 50)
+    // With clouds, leave room above the route to show what hangs over it.
+    val maxE = if (sky != null) routeTop + max(300.0, 0.3 * (routeTop - minE)) else routeTop
+    val length = result.route.length
+    val profileHeight = if (sky != null) 150.dp else 140.dp
+    val bars = if (sky != null) BAR_GAP * 2 + BAR * 2 + BAR_GAP else 0.dp
+    val scrub by rememberUpdatedState(onScrub)
+
+    val input = Modifier.scrubbing(result) { x, width ->
+        val left = LEFT.toPx()
+        val right = width - RIGHT.toPx()
+        fun xOf(d: Double) = left + (right - left) * (d / length).toFloat()
+        val near = result.breaks.minByOrNull { abs(xOf(it.distance) - x) }?.takeIf { abs(xOf(it.distance) - x) <= SNAP.toPx() }
+        val seconds = near?.stop?.startSeconds ?: result.secondsAt(((x - left) / (right - left)).coerceIn(0f, 1f) * length)
+        scrub(seconds)
+    }
+
+    Canvas(modifier.fillMaxWidth().height(TOP + profileHeight + bars + AXIS).then(input)) {
+        val left = LEFT.toPx()
+        val right = size.width - RIGHT.toPx()
+        val top = TOP.toPx()
+        val bottom = top + profileHeight.toPx()
+        fun x(d: Double) = left + (right - left) * (d / length).toFloat()
+        fun y(e: Double) = bottom - (bottom - top) * ((e - minE) / (maxE - minE)).toFloat()
+        val terrainTop = bottom + BAR_GAP.toPx() * 2
+        val cloudsTop = terrainTop + BAR.toPx() + BAR_GAP.toPx()
+        val barsBottom = if (sky != null) cloudsTop + BAR.toPx() else bottom
+        val steps = result.route.steps
+
+        sky?.let { drawClouds(it.columns, cloudColor, minE, maxE, left, right, top, bottom, ::x) }
+        highlight?.let { h ->
+            val x0 = x(h.start)
+            drawRect(highlightColor.copy(alpha = 0.14f), Offset(x0, top), Size(max(2f, x(h.endInclusive) - x0), barsBottom - top))
+        }
+        label(measurer, "${maxE.roundToInt()} m", Offset(0f, top), axis)
+        label(measurer, "${minE.roundToInt()} m", Offset(0f, bottom - 14.sp.toPx()), axis)
+        hint?.let { label(measurer, it, Offset(left + 6.dp.toPx(), top), axis.copy(alpha = 0.8f)) }
+
+        for ((i, step) in steps.withIndex()) {
+            val a = step.start
+            val b = step.end
+            if (!a.elevation.isFinite() || !b.elevation.isFinite()) continue
+            val color = skyLightColor(SkyLight.of(result.samples[i].light, sky?.stepSky?.get(i)?.sky))
+            val area = Path().apply {
+                moveTo(x(a.distance), bottom)
+                lineTo(x(a.distance), y(a.elevation))
+                lineTo(x(b.distance), y(b.elevation))
+                lineTo(x(b.distance), bottom)
+                close()
+            }
+            drawPath(area, color.copy(alpha = 0.3f))
+            drawLine(color, Offset(x(a.distance), y(a.elevation)), Offset(x(b.distance), y(b.elevation)), 2.5.dp.toPx(), StrokeCap.Round)
+        }
+        drawLine(axis.copy(alpha = 0.5f), Offset(left, bottom), Offset(right, bottom), 1.dp.toPx())
+
+        // The causes, on the same x-axis: terrain light, and the clouds above the hiker.
+        if (sky != null) {
+            val barHeight = BAR.toPx()
+            drawRect(track, Offset(left, terrainTop), Size(right - left, barHeight))
+            drawRect(track, Offset(left, cloudsTop), Size(right - left, barHeight))
+            for ((i, step) in steps.withIndex()) {
+                val x0 = x(step.start.distance)
+                val w = max(1f, x(step.end.distance) - x0)
+                drawRect(lightColor(result.samples[i].light), Offset(x0, terrainTop), Size(w, barHeight))
+                val alpha = skyAlpha(sky.stepSky[i].sky)
+                if (alpha > 0f) drawRect(cloudColor.copy(alpha = alpha), Offset(x0, cloudsTop), Size(w, barHeight))
+            }
+            barLabel(measurer, "Terrain", terrainTop + barHeight / 2, axis)
+            barLabel(measurer, "Clouds", cloudsTop + barHeight / 2, axis)
+        }
+
+        // Breaks: a ring in the colour of most of the break, and a mark across the bars.
+        for ((k, b) in result.breaks.withIndex()) {
+            val node = nodes[b.stop.node]
+            val bx = x(node.distance)
+            if (sky != null) drawLine(cursorColor.copy(alpha = 0.5f), Offset(bx, terrainTop), Offset(bx, barsBottom), 1.5.dp.toPx())
+            if (!node.elevation.isFinite()) continue
+            val main = b.pieces.indices.groupBy { p -> SkyLight.of(b.pieces[p].sample.light, sky?.breakSky?.get(k)?.get(p)?.sky) }
+                .maxBy { (_, ps) -> ps.sumOf { b.pieces[it].endSeconds - b.pieces[it].startSeconds } }.key
+            val at = Offset(bx, y(node.elevation))
+            drawCircle(skyLightColor(main), 6.dp.toPx(), at)
+            drawCircle(cursorColor, 6.dp.toPx(), at, style = Stroke(1.5.dp.toPx()))
+        }
+
+        // Full hours, where the hiker is then.
+        val tickTop = barsBottom + 2.dp.toPx()
+        val clock = DateTimeFormatter.ofPattern("HH:mm")
+        var hour = Instant.ofEpochMilli(result.departureUtc).atZone(zone).truncatedTo(ChronoUnit.HOURS).plusHours(1)
+        val arrival = result.timeAt(result.duration)
+        var lastLabelEnd = Float.NEGATIVE_INFINITY
+        while (hour.toInstant().toEpochMilli() <= arrival) {
+            val seconds = (hour.toInstant().toEpochMilli() - result.departureUtc) / 1000.0
+            val hx = x(result.momentAt(seconds).distance)
+            drawLine(axis.copy(alpha = 0.6f), Offset(hx, tickTop), Offset(hx, tickTop + 4.dp.toPx()), 1.dp.toPx())
+            val text = hour.format(clock)
+            val w = measurer.measure(text, TextStyle(fontSize = 10.sp)).size.width
+            val lx = (hx - w / 2).coerceIn(left - 8.dp.toPx(), size.width - w)
+            if (lx > lastLabelEnd + 4.dp.toPx()) {
+                drawText(measurer, text, Offset(lx, tickTop + 4.dp.toPx()), TextStyle(fontSize = 10.sp, color = axis))
+                lastLabelEnd = lx + w
+            }
+            hour = hour.plusHours(1)
+        }
+
+        // Cursor, across the profile and the bars.
+        val d = result.momentAt(cursorSeconds.coerceIn(0.0, result.duration)).distance
+        val cx = x(d)
+        drawLine(cursorColor, Offset(cx, top), Offset(cx, barsBottom), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
+        val e = result.route.elevationAt(d)
+        if (e.isFinite()) {
+            drawCircle(cursorColor, 6.dp.toPx(), Offset(cx, y(e)))
+            drawCircle(cursorFill, 3.dp.toPx(), Offset(cx, y(e)))
+        }
+    }
+}
+
 /** Taps and horizontal drags report their x position (and the element's width) to [at]. */
-private fun Modifier.scrubbing(key: Any, at: androidx.compose.ui.unit.Density.(x: Float, width: Float) -> Unit): Modifier =
+private fun Modifier.scrubbing(key: Any, at: Density.(x: Float, width: Float) -> Unit): Modifier =
     pointerInput(key) {
         detectTapGestures { at(it.x, size.width.toFloat()) }
     }.pointerInput(key) {
@@ -227,8 +265,8 @@ private fun Modifier.scrubbing(key: Any, at: androidx.compose.ui.unit.Density.(x
     }
 
 /**
- * Cloud cover by height between levels, as grey with opacity by cover; cloud above the chart
- * shows as a strip along its top edge.
+ * Cloud cover by height between levels, as faint grey with opacity by cover; cloud above the
+ * chart shows as a strip along its top edge.
  */
 private fun DrawScope.drawClouds(
     columns: List<CloudColumn>,
@@ -254,15 +292,21 @@ private fun DrawScope.drawClouds(
                 if (hi <= lo) continue
                 val cover = (p.cover[k] + p.cover[k + 1]) / 2
                 if (cover < 0.05) continue
-                drawRect(color.copy(alpha = (0.5 * cover).toFloat()), Offset(x0, y(hi)), Size(x1 - x0, y(lo) - y(hi)))
+                drawRect(color.copy(alpha = (0.35 * cover).toFloat()), Offset(x0, y(hi)), Size(x1 - x0, y(lo) - y(hi)))
             }
             // Low and mid-level cloud above the chart (not the thin high cloud).
             val above = p.heights.indices.filter { p.heights[it] > maxE && p.heights[it] < SkyModel.HIGH_CLOUD_M }.maxOfOrNull { p.cover[it] } ?: 0.0
-            if (above >= 0.05) drawRect(color.copy(alpha = (0.6 * above).toFloat()), Offset(x0, top), Size(x1 - x0, strip))
+            if (above >= 0.05) drawRect(color.copy(alpha = (0.5 * above).toFloat()), Offset(x0, top), Size(x1 - x0, strip))
         }
     }
 }
 
 private fun DrawScope.label(m: TextMeasurer, text: String, at: Offset, color: Color) {
     drawText(m, text, at, TextStyle(fontSize = 11.sp, color = color))
+}
+
+/** A bar's name in the left margin, centred on [centreY]. */
+private fun DrawScope.barLabel(m: TextMeasurer, text: String, centreY: Float, color: Color) {
+    val layout = m.measure(text, TextStyle(fontSize = 10.sp, color = color))
+    drawText(layout, topLeft = Offset(0f, centreY - layout.size.height / 2))
 }

@@ -2,7 +2,10 @@ package net.ridgelight.app.ui
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,15 +24,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -47,9 +50,11 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -57,28 +62,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import net.ridgelight.app.Phase
 import net.ridgelight.app.RidgeLightViewModel
 import net.ridgelight.app.Settings
 import net.ridgelight.app.UiState
 import net.ridgelight.app.WeatherState
-import net.ridgelight.app.Phase
 import net.ridgelight.core.analysis.Light
 import net.ridgelight.core.analysis.SunResult
-import net.ridgelight.core.dem.Terrarium
-import net.ridgelight.core.gpx.LightStyle
 import net.ridgelight.core.weather.OpenMeteo
 import net.ridgelight.core.weather.Sky
+import net.ridgelight.core.weather.SkyLight
 import net.ridgelight.core.weather.SkyReport
+import net.ridgelight.core.weather.SkyStretch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
-/**
- * The overview: plan, result, sky in brief and the profile to drag along, with previews of the
- * detail pages. Meant to fit on one phone screen.
- */
+/** The overview: plan, the sun with the profile to drag along, stretches, and the way to the other pages. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -93,6 +96,10 @@ fun MainScreen(
 ) {
     var menu by remember { mutableStateOf(false) }
     var zoneDialog by remember { mutableStateOf(false) }
+    var cloudsDialog by remember { mutableStateOf(false) }
+    var stretchesOpen by rememberSaveable { mutableStateOf(false) }
+    var forecastOpen by rememberSaveable { mutableStateOf(false) }
+    val toggleClouds = { on: Boolean -> if (on && !vm.cloudsExplained) cloudsDialog = true else vm.setClouds(on) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -105,22 +112,13 @@ fun MainScreen(
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text("Sky forecast")
-                                        Text("Clouds and fog from Open-Meteo, when you ask", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                trailingIcon = { Switch(checked = state.skyEnabled, onCheckedChange = null) },
-                                onClick = { vm.setSkyEnabled(!state.skyEnabled) },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
                                         Text("Time zone")
                                         Text(state.settings.zone.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 },
                                 onClick = { menu = false; zoneDialog = true },
                             )
+                            DropdownMenuItem(text = { Text("About") }, onClick = { menu = false; open(Page.ABOUT) })
                         }
                     }
                 },
@@ -138,29 +136,46 @@ fun MainScreen(
                 is Phase.Failed -> Failure(phase.message, openFile)
                 Phase.Ready -> Unit
             }
-            val route = state.route
-            if (route != null) {
-                PlanChips(state, vm)
-                if (route.missingTiles > 0) {
-                    Text("${route.missingTiles} terrain tiles could not be loaded; affected light shows as unknown.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-                if (route.sampled.route.gaps.isNotEmpty()) {
-                    Text("Gaps between track segments are assumed to be straight lines.", style = MaterialTheme.typography.bodySmall)
-                }
-                val result = state.result
-                if (result == null) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                } else {
-                    ResultCard(state, result, vm::checkSky) { open(Page.SKY) }
-                    ProfileCard(state, result, scrub, showHint, onScrub, vm)
-                    PreviewTiles(state, result, vm, open)
-                    OsmAndButton(state, showInOsmAnd)
-                }
-                Footer(state.skyEnabled)
+            val route = state.route ?: return@Column
+            PlanRow(state, vm)
+            if (route.missingTiles > 0) {
+                Text("${route.missingTiles} terrain tiles could not be loaded; affected light shows as unknown.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
+            if (route.sampled.route.gaps.isNotEmpty()) {
+                Text("Gaps between track segments are assumed to be straight lines.", style = MaterialTheme.typography.bodySmall)
+            }
+            val result = state.result
+            if (result == null) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                return@Column
+            }
+            val stretches = state.sky?.stretches ?: result.timeline.map { SkyStretch(it, SkyLight.of(it.light, null), null) }
+            val t = scrub.value.coerceIn(0.0, result.duration)
+            val current = stretches.indexOfFirst { t >= it.run.startSeconds && t < it.run.endSeconds }.let { if (it < 0) stretches.lastIndex else it }
+            val highlight = stretches.getOrNull(current)?.run?.takeIf { stretchesOpen }?.let { it.startDistance..it.endDistance }
+            SunCard(state, result, t, showHint, onScrub, vm, toggleClouds, highlight)
+            Expandable("Stretches", "${stretches.size}", stretchesOpen, { stretchesOpen = !stretchesOpen }) {
+                stretches.forEachIndexed { i, st -> StretchRow(result, st, i == current, vm::localTime) { onScrub(st.run.startSeconds) } }
+                Text(
+                    "Tap a stretch to find it on the profile.",
+                    Modifier.padding(start = 6.dp, top = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val weather = state.weather
+            if (state.cloudsEnabled && weather is WeatherState.Ready) {
+                val at = Instant.ofEpochMilli(weather.fetchedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+                Expandable("Cloud forecast", "from $at", forecastOpen, { forecastOpen = !forecastOpen }) {
+                    ForecastDetails(state.sky) { vm.loadClouds(force = true) }
+                }
+            }
+            PreviewTiles(state, vm, open)
+            OsmAndButton(state, showInOsmAnd)
         }
     }
     if (zoneDialog) ZoneDialog(state.settings.zone, { zoneDialog = false }) { vm.update(state.settings.copy(zone = it)); zoneDialog = false }
+    if (cloudsDialog) CloudsDialog({ cloudsDialog = false }, vm::acceptClouds)
 }
 
 @Composable
@@ -185,9 +200,9 @@ private fun RouteTitle(state: UiState) {
     }
 }
 
-/** Date, start (and arrival), pace and breaks, each a chip that opens its picker. */
+/** Date, start and return, pace and breaks: one row of cells, each opening its picker. */
 @Composable
-private fun PlanChips(state: UiState, vm: RidgeLightViewModel) {
+private fun PlanRow(state: UiState, vm: RidgeLightViewModel) {
     val settings = state.settings
     val result = state.result
     val context = LocalContext.current
@@ -249,6 +264,28 @@ internal fun Section(modifier: Modifier = Modifier, padding: Dp = 12.dp, content
     }
 }
 
+/** A card whose header opens and closes its [content]. */
+@Composable
+internal fun Expandable(title: String, trailing: String?, expanded: Boolean, toggle: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = toggle).padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            trailing?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            val turn by animateFloatAsState(if (expanded) 90f else 0f, label = "chevron")
+            Icon(AppIcons.Chevron, if (expanded) "Close" else "Open", Modifier.padding(start = 6.dp).size(20.dp).rotate(turn), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        AnimatedVisibility(expanded) {
+            Column(Modifier.padding(start = 6.dp, end = 6.dp, bottom = 10.dp), content = content)
+        }
+    }
+}
+
 @Composable
 internal fun Dot(color: Color, size: Dp = 10.dp) = Box(Modifier.size(size).background(color, CircleShape))
 
@@ -276,88 +313,160 @@ private fun Failure(message: String, openFile: () -> Unit) = Section {
     OutlinedButton(onClick = openFile) { Text("Open another file") }
 }
 
+/**
+ * The answer: time in sun (with the clouds when they are on), the Clouds switch, the profile and
+ * its bars to drag along, the legend, and where the hiker is at the cursor.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ResultCard(state: UiState, result: SunResult, checkSky: (Boolean) -> Unit, openSky: () -> Unit) = Section {
-    Row {
-        Text(duration(result.seconds(Light.SUN)), fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.alignByBaseline())
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "in direct sun · ${(result.sunShare * 100).roundToInt()} % of the hike",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.alignByBaseline(),
-        )
+private fun SunCard(
+    state: UiState,
+    result: SunResult,
+    t: Double,
+    showHint: Boolean,
+    onScrub: (Double) -> Unit,
+    vm: RidgeLightViewModel,
+    toggleClouds: (Boolean) -> Unit,
+    highlight: ClosedFloatingPointRange<Double>?,
+) = Section(padding = 10.dp) {
+    val sky = state.sky
+    val combined = sky?.totals ?: SkyLight.ofTerrain(result.totals)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            // Sun, and sun between clouds as "+…" in its own colour, like the profile.
+            val sun = combined.getValue(SkyLight.SUN)
+            val partly = combined.getValue(SkyLight.SUN_AND_CLOUDS)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val onlyBetween = sun < 60 && partly >= 60
+                if (!onlyBetween) Text(duration(sun), fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.alignByBaseline())
+                if (partly >= 60) {
+                    Text(
+                        (if (onlyBetween) "" else "+") + duration(partly),
+                        fontSize = if (onlyBetween) 30.sp else 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PartlyText,
+                        modifier = Modifier.alignByBaseline(),
+                    )
+                }
+                Text(
+                    when {
+                        onlyBetween -> "of sun between clouds"
+                        partly >= 60 -> "in sun, + between clouds"
+                        else -> "in sun"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.alignByBaseline(),
+                )
+            }
+            CloudStatus(state, result, vm)
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = 8.dp)) {
+            Switch(checked = state.cloudsEnabled, onCheckedChange = toggleClouds)
+            Text("Clouds", style = MaterialTheme.typography.labelSmall)
+        }
     }
-    LightBar(result.totals, Modifier.fillMaxWidth().height(12.dp))
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        for (light in Light.entries) {
-            val s = result.seconds(light)
+    ProfileChart(result, sky, state.settings.zone, t, onScrub, highlight = highlight, hint = if (showHint) "Drag along the profile" else null)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        for (light in SkyLight.entries) {
+            val s = combined.getValue(light)
             if (s < 30) continue
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Dot(lightColor(light), 8.dp)
+                Dot(skyLightColor(light), 8.dp)
                 Spacer(Modifier.width(4.dp))
                 Text("${shortLabel(light)} ${duration(s)}", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
-    if (state.skyEnabled) {
-        HorizontalDivider(Modifier.padding(vertical = 2.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        SkyBrief(state, checkSky, openSky)
-    }
+    if (sky != null) CloudsLegend()
+    Readout(result, sky, t, state.settings, vm)
 }
 
-/** The sky in two lines, or the button to check it; opens the sky page. */
+/** Under the headline: what the number includes, or how the cloud forecast is getting on. */
 @Composable
-private fun SkyBrief(state: UiState, checkSky: (Boolean) -> Unit, openSky: () -> Unit) {
+private fun CloudStatus(state: UiState, result: SunResult, vm: RidgeLightViewModel) {
     val small = MaterialTheme.typography.bodySmall
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val terrainOnly = "${(result.sunShare * 100).roundToInt()} % of the hike · from the terrain alone"
     when (val weather = state.weather) {
-        WeatherState.Idle -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Clouds or fog on the way?", style = MaterialTheme.typography.bodyMedium)
-                Text("Checking sends a few points of your route to Open-Meteo.com.", style = small, color = muted)
-            }
-            Spacer(Modifier.width(8.dp))
-            FilledTonalButton(onClick = { checkSky(false) }) { Text("Check the sky") }
-        }
-        WeatherState.Loading -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Checking the sky…", style = small)
-            LinearProgressIndicator(Modifier.fillMaxWidth())
+        WeatherState.Idle -> Text(if (state.cloudsEnabled) "Waiting for the cloud forecast…" else terrainOnly, style = small, color = muted)
+        WeatherState.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(6.dp))
+            Text("Loading the cloud forecast…", style = small, color = muted)
         }
         is WeatherState.Unavailable -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(weather.message, Modifier.weight(1f), style = small, color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = { checkSky(true) }) { Text("Try again") }
+            Text(weather.message, Modifier.weight(1f, fill = false), style = small, color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = { vm.loadClouds(force = true) }) { Text("Retry") }
         }
-        is WeatherState.Ready -> Column(Modifier.fillMaxWidth().clickable(onClick = openSky), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        is WeatherState.Ready -> {
             val sky = state.sky
-            if (sky != null) {
-                Text(skyHeadline(sky), style = MaterialTheme.typography.bodyMedium)
-                Text("🌡 " + weatherLine(sky), style = MaterialTheme.typography.bodyMedium)
-            } else {
+            if (sky == null) {
                 val last = Instant.ofEpochMilli(weather.forecast.period.last).atZone(state.settings.zone).toLocalDate()
-                Text("No forecast for this date yet; it reaches ${last.format(dayFormat)}.", style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Forecast by Open-Meteo.com", Modifier.weight(1f), style = small, color = muted)
-                Text("Details", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Icon(AppIcons.Chevron, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("No cloud forecast for this date yet (it reaches ${last.format(dayFormat)}) · terrain alone", style = small, color = muted)
+            } else {
+                Text("Terrain alone ${duration(result.seconds(Light.SUN))}", style = small, color = muted)
             }
         }
     }
 }
 
-/** The profile and timeline to drag along, and where the hiker is at that moment. */
+/** What the grey in the Clouds bar means. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ProfileCard(state: UiState, result: SunResult, scrub: State<Double>, showHint: Boolean, onScrub: (Double) -> Unit, vm: RidgeLightViewModel) =
-    Section(padding = 10.dp) {
-        var breakDialog by remember { mutableStateOf(false) }
-        val sky = state.sky
-        val t = scrub.value.coerceIn(0.0, result.duration)
-        val moment = result.momentAt(t)
-        ProfileChart(result, moment.distance, sky?.columns, onScrub = onScrub, hint = if (showHint) "Drag along the profile" else null)
-        TimelineBar(result, Modifier.fillMaxWidth().height(22.dp), cursorSeconds = t, onScrub = onScrub)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Dot(lightColor(moment.sample.light))
+private fun CloudsLegend() {
+    val grey = MaterialTheme.colorScheme.onSurfaceVariant
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Clouds:", style = MaterialTheme.typography.bodySmall, color = grey)
+        for (s in listOf(Sky.CLEAR, Sky.THIN_CLOUD, Sky.PARTLY_CLOUDY, Sky.OVERCAST, Sky.IN_CLOUD)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(width = 14.dp, height = 8.dp)
+                        .background(grey.copy(alpha = skyAlpha(s)), RoundedCornerShape(1.dp))
+                        .border(0.5.dp, grey.copy(alpha = 0.4f), RoundedCornerShape(1.dp)),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    when (s) {
+                        Sky.CLEAR -> "clear"
+                        Sky.THIN_CLOUD -> "thin"
+                        Sky.PARTLY_CLOUDY -> "broken"
+                        Sky.OVERCAST -> "overcast"
+                        Sky.IN_CLOUD -> "fog"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = grey,
+                )
+            }
+        }
+    }
+}
+
+/** Where the hiker is at the cursor, in what light, and "Break here". */
+@Composable
+private fun Readout(result: SunResult, sky: SkyReport?, t: Double, settings: Settings, vm: RidgeLightViewModel) {
+    var breakDialog by remember { mutableStateOf(false) }
+    val moment = result.momentAt(t)
+    val k = moment.breakIndex
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (k != null) {
+            val b = result.breaks[k]
+            val byLight = b.pieces.indices.groupBy { p -> SkyLight.of(b.pieces[p].sample.light, sky?.breakSky?.get(k)?.get(p)?.sky) }
+                .mapValues { (_, ps) -> ps.sumOf { b.pieces[it].endSeconds - b.pieces[it].startSeconds } }
+            Dot(skyLightColor(byLight.maxBy { it.value }.key))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "☕ Break ${vm.localTime(result.timeAt(b.stop.startSeconds))}–${vm.localTime(result.timeAt(b.stop.endSeconds))} · km %.1f".format(b.distance / 1000),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(byLight.entries.sortedBy { it.key.ordinal }.joinToString(" · ") { "${label(it.key)} ${duration(it.value)}" }, style = MaterialTheme.typography.bodySmall)
+            }
+        } else {
+            val i = result.schedule.stepAt(t)
+            val skyAt = sky?.stepSky?.get(i)
+            val light = SkyLight.of(result.samples[i].light, skyAt?.sky)
+            Dot(skyLightColor(light))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 val elevation = result.route.elevationAt(moment.distance).let { if (it.isFinite()) " · ${it.roundToInt()} m" else "" }
@@ -366,35 +475,75 @@ private fun ProfileCard(state: UiState, result: SunResult, scrub: State<Double>,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Text(momentDetails(result, sky, t), style = MaterialTheme.typography.bodySmall)
+                val sun = moment.sample.sun.apparentAltitude.let { if (it > 0) " · sun %.0f° up".format(it) else "" }
+                val clear = skyAt?.takeIf { light == SkyLight.SUN }?.let { " · " + skyLabel(it.sky) } ?: ""
+                Text(label(light, skyAt) + sun + clear, style = MaterialTheme.typography.bodySmall)
             }
             // Not at the very start or end: a break there would only move the start or the arrival.
-            val inside = moment.distance > 50 && moment.distance < result.route.length - 50
-            if (moment.breakIndex == null && inside) TextButton(onClick = { breakDialog = true }) { Text("☕ Break here") }
+            if (moment.distance > 50 && moment.distance < result.route.length - 50) {
+                TextButton(onClick = { breakDialog = true }) { Text("☕ Break here") }
+            }
         }
-        if (breakDialog) BreakDialog(result, moment.distance, state.settings.zone, { breakDialog = false }, vm::addBreak)
     }
-
-/** "Terrain shade · sun 12° up · overcast" for the moment [t] seconds after departure. */
-internal fun momentDetails(result: SunResult, sky: SkyReport?, t: Double): String {
-    val moment = result.momentAt(t)
-    val sample = moment.sample
-    val skyAt = sky?.stretchAt(t)?.sky
-    val hidden = skyAt?.sky == Sky.OVERCAST || skyAt?.sky == Sky.IN_CLOUD
-    val light = if (sample.light == Light.SUN && hidden) "Terrain sun" else LightStyle.label(sample.light)
-    val sun = if (sample.sun.apparentAltitude > 0) " · sun %.0f° up".format(sample.sun.apparentAltitude) else ""
-    val doing = if (moment.breakIndex != null) "☕ Break · " else ""
-    return "$doing$light$sun" + (skyAt?.let { " · " + skyLabel(it) } ?: "")
+    if (breakDialog) BreakDialog(result, moment.distance, settings.zone, { breakDialog = false }, vm::addBreak)
 }
 
 @Composable
-private fun PreviewTiles(state: UiState, result: SunResult, vm: RidgeLightViewModel, open: (Page) -> Unit) {
+private fun StretchRow(result: SunResult, st: SkyStretch, chosen: Boolean, localTime: (Long) -> String, onClick: () -> Unit) {
+    val run = st.run
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (chosen) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        val color = skyLightColor(st.light).let { if (run.isBreak) it.copy(alpha = 0.5f) else it }
+        Box(Modifier.size(width = 4.dp, height = 30.dp).background(color, RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            val what = (if (run.isBreak) "☕ Break · " else "") + label(st.light, st.sky)
+            Text("${localTime(result.timeAt(run.startSeconds))}–${localTime(result.timeAt(run.endSeconds))} · $what", style = MaterialTheme.typography.bodyMedium)
+            val where = if (run.isBreak) "at km %.1f".format(run.startDistance / 1000) else "km %.1f–%.1f".format(run.startDistance / 1000, run.endDistance / 1000)
+            Text("$where · ${duration(run.seconds)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Fog, a sea of cloud below, how far to trust it, and where it comes from. */
+@Composable
+private fun ForecastDetails(sky: SkyReport?, refresh: () -> Unit) {
+    Column(Modifier.padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val body = MaterialTheme.typography.bodyMedium
+        if (sky != null) {
+            if (sky.inCloudSeconds >= 60) {
+                val where = sky.inCloudRanges.joinToString(", ") { "km %.1f–%.1f".format(it.start / 1000, it.endInclusive / 1000) }
+                Text("In fog or cloud for ${duration(sky.inCloudSeconds)} ($where).", style = body)
+            }
+            if (sky.sunAboveClouds >= 60) Text("Above a sea of cloud for ${duration(sky.sunAboveClouds)} of the sun.", style = body)
+        }
+        Text(
+            "The profile's colours combine terrain and clouds. Grey behind the profile: the forecast cloud at each height when you pass. " +
+                "Forecast models work on a grid of a few kilometres and on levels a few hundred metres apart, and often misplace low fog; " +
+                "more than a week ahead they are rough.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(OpenMeteo.ATTRIBUTION, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = refresh) { Text("Refresh") }
+        }
+    }
+}
+
+@Composable
+private fun PreviewTiles(state: UiState, vm: RidgeLightViewModel, open: (Page) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Tile("Stretches", Modifier.weight(1f), { open(Page.STRETCHES) }) { StretchesPreview(state, result, vm::localTime) }
         Tile("Start times", Modifier.weight(1f), { open(Page.START_TIMES) }) { StartTimesPreview(state, vm::localTime) }
-        if (state.skyEnabled) {
+        if (state.cloudsEnabled) {
             Tile("Which day?", Modifier.weight(1f), {
-                vm.checkSky(false)
+                if (state.weather is WeatherState.Unavailable) vm.loadClouds(force = true)
                 open(Page.DAYS)
             }) { DaysPreview(state) }
         }
@@ -406,34 +555,15 @@ private fun Tile(title: String, modifier: Modifier, onClick: () -> Unit, content
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-        modifier = modifier.height(112.dp),
+        modifier = modifier.height(104.dp),
     ) {
-        Column(Modifier.padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Icon(AppIcons.Chevron, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             content()
         }
-    }
-}
-
-/** The first stretches with their start time and light. */
-@Composable
-private fun StretchesPreview(state: UiState, result: SunResult, localTime: (Long) -> String) {
-    val runs = state.sky?.stretches?.map { it.run } ?: result.timeline
-    val shown = if (runs.size <= 3) runs else runs.take(2)
-    for (run in shown) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(localTime(result.timeAt(run.startSeconds)), style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.width(5.dp))
-            Dot(lightColor(run.light).let { if (run.isBreak) it.copy(alpha = 0.5f) else it }, 7.dp)
-            Spacer(Modifier.width(4.dp))
-            Text(if (run.isBreak) "Break" else shortLabel(run.light), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-        }
-    }
-    if (runs.size > shown.size) {
-        Text("+${runs.size - shown.size} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -444,40 +574,40 @@ private fun ColumnScope.StartTimesPreview(state: UiState, localTime: (Long) -> S
         LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         return
     }
-    val best = sweep.maxByOrNull { it.sunShare }?.takeIf { it.sunShare >= 0.01 }
+    val best = sweep.maxByOrNull { it.expectedSun }?.takeIf { it.expectedSun >= 60 }
     Text(best?.let { "Best ${localTime(it.departureUtc)}" } ?: "No sun", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-    Text(best?.let { "${(it.sunShare * 100).roundToInt()} % in sun" } ?: "at any start", style = MaterialTheme.typography.bodySmall)
+    Text(best?.let { sunPhrase(it.combined) } ?: "at any start", style = MaterialTheme.typography.bodySmall, maxLines = 1)
     val chosen = sweep.indexOfFirst { Instant.ofEpochMilli(it.departureUtc).atZone(state.settings.zone).toLocalTime() == state.settings.start }
-    MiniColumns(sweep.map { it.sunShare }, lightColor(Light.SUN), Modifier.fillMaxWidth().weight(1f), selected = chosen.takeIf { it >= 0 })
+    MiniColumns(
+        sweep.map { if (it.duration > 0) it.expectedSun / it.duration else 0.0 },
+        skyLightColor(SkyLight.SUN),
+        Modifier.fillMaxWidth().weight(1f),
+        selected = chosen.takeIf { it >= 0 },
+    )
 }
 
 @Composable
 private fun ColumnScope.DaysPreview(state: UiState) {
     val small = MaterialTheme.typography.bodySmall
     when (state.weather) {
-        WeatherState.Idle, is WeatherState.Unavailable -> {
-            Text("Compare forecast days", style = small)
-            Text("Tap to check the sky", style = small, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        WeatherState.Idle, WeatherState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+        is WeatherState.Unavailable -> {
+            Text("No forecast", style = MaterialTheme.typography.bodyMedium)
+            Text("Tap to try again", style = small, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        WeatherState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         is WeatherState.Ready -> {
             val days = state.days
             if (days == null) {
                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 return
             }
-            val best = days.maxByOrNull { it.skyWeightedSun }?.takeIf { it.skyWeightedSun >= 600 }
-            Text(
-                best?.let { it.date.format(java.time.format.DateTimeFormatter.ofPattern("EEE d")) + " " + (it.clearShareOfSun?.let(::skyIcon) ?: "") } ?: "No clear sun",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Text(if (best != null) "most clear sun" else "in the forecast", style = small)
+            val best = days.maxByOrNull { it.expectedSun }?.takeIf { it.expectedSun >= 600 }
+            Text(best?.let { "Best " + it.date.format(DateTimeFormatter.ofPattern("EEE d")) } ?: "Little sun", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(best?.let { sunPhrase(it.combined) } ?: "in the forecast", style = small, maxLines = 1)
             val today = LocalDate.now(state.settings.zone)
             MiniColumns(
-                days.map { if (it.duration > 0) it.skyWeightedSun / it.duration else 0.0 },
-                lightColor(Light.SUN),
+                days.map { if (it.duration > 0) it.expectedSun / it.duration else 0.0 },
+                skyLightColor(SkyLight.SUN),
                 Modifier.fillMaxWidth().weight(1f),
                 selected = days.indexOfFirst { it.date == state.settings.date }.takeIf { it >= 0 },
                 faded = { days[it].date > today.plusDays(7) },
@@ -495,18 +625,8 @@ private fun OsmAndButton(state: UiState, showInOsmAnd: () -> Unit) {
     }
 }
 
-@Composable
-private fun Footer(sky: Boolean) {
-    Text(
-        "Sun is estimated from the terrain; trees, buildings and snow are not modelled. " +
-            (if (sky) "Clouds come from the forecast, only when you check the sky. " else "") +
-            "Walking times use the rule behind hiking-sign times (DIN 33466). ${Terrarium.ATTRIBUTION}." +
-            if (sky) " ${OpenMeteo.ATTRIBUTION}." else "",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 8.dp),
-    )
-}
+/** Sun between clouds as text: the legend's amber, darkened to read on the card. */
+private val PartlyText = Color(0xFFA8823A)
 
-/** "Tue 24 Nov · start 09:00 · pace ×1.00", for the detail pages. */
+/** "Tue 24 Nov · start 09:00 · pace ×1.00", for the other pages. */
 internal fun planLine(s: Settings) = "${s.date.format(dayFormat)} · start ${s.start} · pace ×%.2f".format(s.paceFactor)

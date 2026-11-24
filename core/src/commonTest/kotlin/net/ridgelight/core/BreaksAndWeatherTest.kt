@@ -18,6 +18,7 @@ import net.ridgelight.core.weather.CloudProfile
 import net.ridgelight.core.weather.ForecastPoint
 import net.ridgelight.core.weather.RouteForecast
 import net.ridgelight.core.weather.Sky
+import net.ridgelight.core.weather.SkyLight
 import net.ridgelight.core.weather.SkyModel
 import net.ridgelight.core.weather.SkyReport
 import net.ridgelight.core.weather.WeatherHour
@@ -88,12 +89,18 @@ class BreaksAndWeatherTest {
         assertEquals(stop.stop.endSeconds, r.secondsAt(stop.distance), 1e-6)
 
         // A sweep entry is the same as a full analysis for that departure, breaks and clouds included.
-        val clear = { d: Double, _: Long -> if (d < 300) 0.25 else 0.5 }
-        val entry = analyzer.sweep(schedule, listOf(departure), clear).single()
+        val sky = { d: Double, _: Long -> if (d > 800) Sky.PARTLY_CLOUDY else Sky.OVERCAST }
+        val entry = analyzer.sweep(schedule, listOf(departure), sky).single()
         assertEquals(r.totals, entry.totals)
-        assertEquals(r.weightedSunSeconds(clear)!!, entry.weightedSun!!, 1e-6)
-        assertTrue(entry.weightedSun!! < r.seconds(Light.SUN))
-        assertNull(r.weightedSunSeconds { _, _ -> null }, "no forecast, no weighted sun")
+        val combined = r.skyTotals(sky)!!
+        for (l in SkyLight.entries) assertEquals(combined.getValue(l), entry.skyTotals!!.getValue(l), 1e-6, "$l")
+        assertTrue(combined.getValue(SkyLight.SUN_AND_CLOUDS) > 0, "sun past the wall, under broken cloud")
+        assertEquals(0.0, combined.getValue(SkyLight.SUN), "no clear sky anywhere")
+        assertEquals(r.seconds(Light.TERRAIN_SHADE), combined.getValue(SkyLight.SHADE), 1e-6, "shade does not depend on the sky")
+        assertEquals(r.duration, combined.values.sum(), 1e-6)
+        assertTrue(entry.expectedSun < r.seconds(Light.SUN))
+        assertNull(r.skyTotals { _, _ -> null }, "no forecast, no combined light")
+        assertEquals(SkyLight.ofTerrain(r.totals), analyzer.sweep(schedule, listOf(departure)).single().combined)
 
         val wpts = OsmAndExport.transitions(r) { "12:00" }
         assertTrue(wpts.any { it.name.startsWith("Break ") })
@@ -104,24 +111,18 @@ class BreaksAndWeatherTest {
     private val sample = """
         [{"latitude":46.5,"longitude":8.0,"elevation":800.0,"hourly":{
           "time":[1766300400,1766304000,1766307600],
-          "temperature_2m":[-2.0,0.0,null],
-          "precipitation_probability":[10,20,30],
-          "precipitation":[0.0,0.2,0.0],
-          "weather_code":[3,61,1],
-          "cloud_cover":[100,80,10],
-          "wind_speed_10m":[5.0,7.5,10.0],
-          "wind_gusts_10m":[12.0,null,20.0],
+          "cloud_cover":[100,null,10],
           "geopotential_height_900hPa":[1000,1000,1000], "cloud_cover_900hPa":[100,60,0],
           "geopotential_height_850hPa":[1500,1500,1500], "cloud_cover_850hPa":[0,0,0],
           "geopotential_height_700hPa":[3000,3000,3000], "cloud_cover_700hPa":[100,100,0],
           "geopotential_height_300hPa":[9000,9000,9000], "cloud_cover_300hPa":[0,0,80]}},
          {"latitude":46.5,"longitude":8.01,"elevation":1200.0,"hourly":{
-          "time":[1766300400],"temperature_2m":[-5.5],"cloud_cover":[0],"weather_code":[0]}}]
+          "time":[1766300400],"cloud_cover":[20]}}]
     """.trimIndent()
 
     private val places = listOf(
-        OpenMeteo.Place(0.0, LatLon(46.5, 8.0), 800.0),
-        OpenMeteo.Place(1000.0, LatLon(46.5, 8.01), 1200.0),
+        OpenMeteo.Place(0.0, LatLon(46.5, 8.0)),
+        OpenMeteo.Place(1000.0, LatLon(46.5, 8.01)),
     )
     private val t0 = 1766300400_000L
 
@@ -130,21 +131,18 @@ class BreaksAndWeatherTest {
         val f = OpenMeteo.parse(sample, places)
         val half = f.at(100.0, t0 + 1_800_000)
         assertNotNull(half)
-        assertEquals(-1.0, half.temperature, 1e-9)
-        assertEquals(0.15, half.precipitationProbability, 1e-9)
-        assertEquals(61, half.weatherCode, "the code is taken from the nearer hour")
-        assertEquals(12.0, half.windGusts, 1e-9, "a missing value falls back to its neighbour")
+        assertEquals(1.0, half.cloudCover, 1e-9, "a missing value falls back to its neighbour")
         assertEquals(0.8, half.clouds!!.coverAt(1000.0), 1e-9, "profiles are interpolated in time")
         assertEquals(0.4, half.clouds!!.coverAt(1250.0), 1e-9, "and in height")
         assertEquals(0.0, half.clouds!!.coverAt(12_000.0), "nothing above the top level")
-        assertEquals(-1.0 - 0.65, f.at(100.0, t0 + 1_800_000, elevation = 900.0)!!.temperature, 1e-9, "lapse rate")
         assertNull(f.at(100.0, t0 - 1), "before the forecast")
-        assertEquals(-5.5, f.at(900.0, t0)!!.temperature, "nearest place")
+        assertEquals(0.2, f.at(900.0, t0)!!.cloudCover, 1e-9, "nearest place")
         assertNull(f.at(900.0, t0)!!.clouds, "no levels, no profile")
 
         val url = OpenMeteo.url(places, "2025-12-21", "2025-12-22")
-        assertTrue("latitude=46.5000,46.5000&longitude=8.0000,8.0100&elevation=800,1200" in url, url)
+        assertTrue("latitude=46.5000,46.5000&longitude=8.0000,8.0100&hourly=cloud_cover," in url, url)
         assertTrue("cloud_cover_850hPa,geopotential_height_850hPa" in url)
+        assertFalse("temperature" in url || "wind" in url || "elevation" in url, "clouds only")
         assertFailsWith<WeatherException> { OpenMeteo.parse("""{"error":true,"reason":"out of range"}""", places) }
         assertFailsWith<WeatherException> { OpenMeteo.parse(sample, places.take(1)) }
     }
@@ -162,15 +160,20 @@ class BreaksAndWeatherTest {
         assertEquals(Sky.THIN_CLOUD, top.sky)
         assertFalse(top.cloudsBelow)
 
-        val lid = WeatherHour(t0, 0.0, 0.0, 0.0, 0, 0.0, CloudProfile(doubleArrayOf(800.0, 1000.0, 1500.0, 3000.0), doubleArrayOf(1.0, 0.9, 0.0, 0.0)), 0.0, 0.0)
+        val lid = WeatherHour(t0, 0.0, CloudProfile(doubleArrayOf(800.0, 1000.0, 1500.0, 3000.0), doubleArrayOf(1.0, 0.9, 0.0, 0.0)))
         val above = SkyModel.classify(lid, 1_300.0)
         assertEquals(Sky.CLEAR, above.sky)
         assertTrue(above.cloudsBelow, "above a sea of fog")
-        assertEquals(0.0, SkyModel.sunWeight(Sky.OVERCAST))
+
+        assertEquals(SkyLight.SUN, SkyLight.of(Light.SUN, Sky.THIN_CLOUD))
+        assertEquals(SkyLight.SUN_AND_CLOUDS, SkyLight.of(Light.SUN, Sky.PARTLY_CLOUDY))
+        assertEquals(SkyLight.CLOUDED, SkyLight.of(Light.SUN, Sky.IN_CLOUD))
+        assertEquals(SkyLight.SHADE, SkyLight.of(Light.TERRAIN_SHADE, Sky.CLEAR))
+        assertEquals(SkyLight.SUN, SkyLight.of(Light.SUN, null), "no forecast: the terrain decides")
     }
 
     @Test
-    fun skyReportSplitsStretchesBySky() {
+    fun skyReportCombinesTerrainAndClouds() {
         // Flat ground, so the whole 1.2 km walk (about 18 min) is in terrain sun.
         val pts = List(33) { TrackPoint(origin.lat, origin.lon + 0.0005 * it) }
         val terrain = Synthetic.terrain(pts.map { LatLon(it.lat, it.lon) }, listOf(TileLevel(13, 6_000.0))) { _, _ -> 500.0 }
@@ -184,22 +187,41 @@ class BreaksAndWeatherTest {
         val hours = (-10..30).map { k ->
             val t = departure + k * 360_000L
             val deck = if (t < arrival) 0.0 else 1.0
-            WeatherHour(t, 1.0, 0.1, 0.0, 3, deck, CloudProfile(doubleArrayOf(400.0, 1200.0, 1500.0, 9000.0), doubleArrayOf(0.0, deck, 0.0, 0.0)), 10.0, 20.0)
+            WeatherHour(t, deck, CloudProfile(doubleArrayOf(400.0, 1200.0, 1500.0, 9000.0), doubleArrayOf(0.0, deck, 0.0, 0.0)))
         }
-        val forecast = RouteForecast(listOf(ForecastPoint(0.0, origin, 500.0, hours)))
+        val forecast = RouteForecast(listOf(ForecastPoint(0.0, origin, hours)))
         val report = SkyReport.of(r, forecast)!!
 
         assertEquals(r.duration, report.stretches.sumOf { it.run.seconds }, 1e-6, "stretches cover the hike")
-        assertEquals(r.seconds(Light.SUN), report.sunSeconds, 1e-6)
-        assertEquals(listOf(Sky.CLEAR, Sky.OVERCAST), report.stretches.map { it.sky?.sky }, "the short partly cloudy spell is folded in")
+        assertEquals(r.duration, report.totals.values.sum(), 1e-6)
+        assertEquals(listOf(SkyLight.SUN, SkyLight.CLOUDED), report.stretches.map { it.light }, "the short partly cloudy spell is folded in")
+        assertEquals(listOf(Sky.CLEAR, Sky.OVERCAST), report.stretches.map { it.sky?.sky })
         assertTrue(abs(report.stretches[0].run.seconds - 9.5 * 60) < 60, "clear for about the first 9 minutes")
         assertEquals(0.0, report.inCloudSeconds)
-        assertEquals(1.0, report.maxTemperature, 1e-6)
         assertTrue(report.columns.isNotEmpty())
 
-        val weighted = r.weightedSunSeconds(SkyModel.sunWeights(forecast, route))!!
-        assertTrue(abs(weighted - report.sunBySky.getValue(Sky.CLEAR)) < 120, "weights: 1 under clear sky, 0 under the deck")
-        assertNull(SkyReport.of(r, RouteForecast(listOf(ForecastPoint(0.0, origin, 500.0, hours.take(12))))), "forecast too short")
+        val totals = r.skyTotals(SkyModel.skyAt(forecast, route))!!
+        for (l in SkyLight.entries) assertEquals(totals.getValue(l), report.seconds(l), 1e-6, "report and sweeps agree on $l")
+        assertNull(SkyReport.of(r, RouteForecast(listOf(ForecastPoint(0.0, origin, hours.take(12))))), "forecast too short")
+    }
+
+    @Test
+    fun shadeIsNotSplitBySky() {
+        val (route, analyzer) = setup()
+        val departure = IsoTime.parse("2025-12-21T10:30:00Z")!!
+        val r = analyzer.analyse(Din33466Pace().schedule(route), departure)
+        assertTrue(r.runs.any { it.light == Light.TERRAIN_SHADE })
+        // The wall shades the first ~600 m (about 9 minutes); a deck arrives 4 minutes in.
+        val arrival = departure + 4 * 60_000L
+        val hours = (-10..40).map { k ->
+            val t = departure + k * 120_000L
+            val deck = if (t < arrival) 0.0 else 1.0
+            WeatherHour(t, deck, CloudProfile(doubleArrayOf(400.0, 1200.0, 1500.0, 9000.0), doubleArrayOf(0.0, deck, 0.0, 0.0)))
+        }
+        val report = SkyReport.of(r, RouteForecast(listOf(ForecastPoint(0.0, origin, hours))))!!
+        assertEquals(r.runs.count { it.light == Light.TERRAIN_SHADE }, report.stretches.count { it.light == SkyLight.SHADE })
+        assertEquals(SkyLight.SHADE, report.stretches.first().light)
+        assertEquals(SkyLight.CLOUDED, report.stretches.last().light, "the sun past the wall is under the deck")
     }
 
     @Test

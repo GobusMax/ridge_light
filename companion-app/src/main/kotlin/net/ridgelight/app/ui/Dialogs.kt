@@ -181,3 +181,26 @@ fun ZoneDialog(current: ZoneId, dismiss: () -> Unit, pick: (ZoneId) -> Unit) {
         },
     )
 }
+
+/** Asked once, before the first cloud forecast is fetched. */
+@Composable
+fun CloudsDialog(dismiss: () -> Unit, accept: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("Include the clouds?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Ridge Light then combines the terrain with the cloud forecast: sun under a clear sky stays sun, under broken cloud it becomes “sun and clouds”, and overcast or fog hides it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "For this, the coordinates of up to six points of your route are sent to Open-Meteo (open-meteo.com), for every route you open while Clouds is on. Nothing else is sent.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { accept(); dismiss() }) { Text("Turn on") } },
+        dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
+    )
+}
