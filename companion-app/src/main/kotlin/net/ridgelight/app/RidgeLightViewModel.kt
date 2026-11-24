@@ -92,6 +92,8 @@ data class UiState(
     val route: RouteInfo? = null,
     val result: SunResult? = null,
     val sweep: List<SweepEntry>? = null,
+    /** Sky forecast switched on (kept across launches); off hides and never fetches it. */
+    val skyEnabled: Boolean = true,
     val weather: WeatherState = WeatherState.Idle,
     /** The sky over the planned hike; null without a forecast or if it does not cover the date. */
     val sky: SkyReport? = null,
@@ -106,8 +108,19 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
     private val tiles = TerrainTileCache(app)
     val osmand = OsmAndBridge(app)
 
-    private val _state = MutableStateFlow(UiState(osmandInstalled = osmand.installedPackage() != null))
+    private val prefs = app.getSharedPreferences("ridgelight", Application.MODE_PRIVATE)
+
+    private val _state = MutableStateFlow(
+        UiState(osmandInstalled = osmand.installedPackage() != null, skyEnabled = prefs.getBoolean(PREF_SKY, true)),
+    )
     val state: StateFlow<UiState> = _state
+
+    /** The point of the hike followed on the profile, in seconds after departure; apart from [state] so dragging stays cheap. */
+    private val _scrub = MutableStateFlow(0.0)
+    val scrub: StateFlow<Double> = _scrub
+    fun scrubTo(seconds: Double) {
+        _scrub.value = seconds
+    }
 
     // Analyses run one at a time (the analyzer's calls must not overlap); each one spreads its
     // terrain rays over all cores through the worker pool.
@@ -132,6 +145,7 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         analysisJob?.cancel()
         weatherJob?.cancel()
+        _scrub.value = 0.0
         _state.update {
             it.copy(
                 phase = Phase.Reading, route = null, result = null, sweep = null, osmandMessage = null,
@@ -173,7 +187,11 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         analyse(withSweep = dayChanged || settings.paceFactor != old.paceFactor || settings.breaks != old.breaks)
     }
 
+    /** A break just added: the cursor goes to it once the analysis is done. */
+    private var newBreakAt: Double? = null
+
     fun addBreak(distance: Double, minutes: Int) {
+        newBreakAt = distance
         val s = _state.value.settings
         update(s.copy(breaks = (s.breaks + PlannedBreak(distance, minutes)).sortedBy { it.distance }))
     }
@@ -188,6 +206,7 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
      * sends route points to the weather service. A forecast less than an hour old is reused.
      */
     fun checkSky(force: Boolean = false) {
+        if (!_state.value.skyEnabled) return
         val route = _state.value.route?.sampled ?: return
         val current = _state.value.weather
         if (!force && current is WeatherState.Ready && System.currentTimeMillis() - current.fetchedAt < 3_600_000L) return
@@ -202,6 +221,19 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
             if (_state.value.route?.sampled !== route) return@launch
             _state.update { it.copy(weather = weather) }
             if (weather is WeatherState.Ready) analyse(withSweep = true)
+        }
+    }
+
+    /** Switching the sky forecast off drops any forecast and its marks on the results. */
+    fun setSkyEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(PREF_SKY, enabled).apply()
+        if (enabled == _state.value.skyEnabled) return
+        _state.update { it.copy(skyEnabled = enabled) }
+        if (!enabled) {
+            weatherJob?.cancel()
+            val had = _state.value.weather is WeatherState.Ready
+            _state.update { it.copy(weather = WeatherState.Idle, sky = null, days = null) }
+            if (had) analyse(withSweep = true)
         }
     }
 
@@ -220,6 +252,13 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
                 val sch = walking.withBreaks(a.route, settings.breaks.map { Break(it.distance, it.minutes * 60.0) })
                 val r = a.analyse(sch, settings.departureUtc())
                 r to forecast?.let { SkyReport.of(r, it) }
+            }
+            val old = _state.value.result
+            val added = newBreakAt?.let { at -> result.breaks.minByOrNull { kotlin.math.abs(it.distance - at) } }
+            newBreakAt = null
+            when {
+                added != null -> _scrub.value = added.stop.startSeconds
+                old != null && old.route === result.route -> _scrub.value = samePlace(old, result, _scrub.value)
             }
             _state.update { it.copy(result = result, sky = sky) }
             val t1 = SystemClock.elapsedRealtime()
@@ -241,6 +280,22 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
             }
             Log.i(TAG, "analysis ${t1 - t0} ms" + if (withSweep) ", sweep ${SystemClock.elapsedRealtime() - t1} ms" else "")
         }
+    }
+
+    /**
+     * Where [seconds] marks the hike in [old], as a moment of [new]: the same place on the route,
+     * or the same point of a break that is still planned there.
+     */
+    private fun samePlace(old: SunResult, new: SunResult, seconds: Double): Double {
+        val t = seconds.coerceIn(0.0, old.duration)
+        val moment = old.momentAt(t)
+        moment.breakIndex?.let { k ->
+            val was = old.breaks[k].stop
+            new.breaks.firstOrNull { it.stop.node == was.node }?.let { b ->
+                return (b.stop.startSeconds + (t - was.startSeconds)).coerceAtMost(b.stop.endSeconds)
+            }
+        }
+        return new.secondsAt(moment.distance)
     }
 
     /** Departures every 30 minutes from an hour before sunrise until half an hour before sunset. */
@@ -325,3 +380,4 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 private const val TAG = "RidgeLight"
+private const val PREF_SKY = "sky_forecast"

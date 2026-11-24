@@ -81,6 +81,12 @@ class BreaksAndWeatherTest {
         assertEquals(0, moment.breakIndex)
         assertEquals(stop.distance, moment.distance)
 
+        // Place → time is the inverse of time → place while walking; at the break, walking on.
+        for (t in listOf(0.0, 100.0, stop.stop.startSeconds - 30, stop.stop.endSeconds + 30, r.duration)) {
+            assertEquals(t, r.secondsAt(r.momentAt(t).distance), 1e-6)
+        }
+        assertEquals(stop.stop.endSeconds, r.secondsAt(stop.distance), 1e-6)
+
         // A sweep entry is the same as a full analysis for that departure, breaks and clouds included.
         val clear = { d: Double, _: Long -> if (d < 300) 0.25 else 0.5 }
         val entry = analyzer.sweep(schedule, listOf(departure), clear).single()

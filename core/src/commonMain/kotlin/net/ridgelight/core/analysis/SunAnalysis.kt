@@ -227,6 +227,24 @@ class SunResult(
     }
 
     fun timeAt(seconds: Double): Long = departureUtc + (seconds * 1000).toLong()
+
+    /**
+     * Seconds after departure at which the hiker passes [distance] metres along the route; at a
+     * break, when they walk on.
+     */
+    fun secondsAt(distance: Double): Double {
+        val steps = route.steps
+        if (steps.isEmpty()) return 0.0
+        var lo = 0
+        var hi = steps.size - 1
+        while (lo < hi) {
+            val m = (lo + hi) ushr 1
+            if (steps[m].end.distance <= distance) lo = m + 1 else hi = m
+        }
+        val step = steps[lo]
+        val f = ((distance - step.start.distance) / step.length).let { if (it.isFinite()) it.coerceIn(0.0, 1.0) else 0.0 }
+        return schedule.stepStart[lo] + schedule.stepSpan[lo] * f
+    }
 }
 
 data class SweepEntry(

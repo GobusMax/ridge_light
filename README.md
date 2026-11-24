@@ -82,19 +82,29 @@ Tiles are cached in `~/.cache/ridgelight/terrarium`.
 
 ## Companion app
 
-Open a track in OsmAnd, then **Share → Ridge Light**, or use "Open GPX" in the app. Pick the
-date, start time and pace.
+Open a track in OsmAnd, then **Share → Ridge Light**, or use "Open GPX" in the app.
 
-- **Breaks.** "Add a break" (at a time of the current plan) or "Add a break here" (at the
-  profile cursor). A break stays at its place when start time or pace change, and its light
-  counts in the totals.
-- **Sky.** Only when you tap "Check the sky" (the request sends a few points of the route to
-  Open-Meteo):
+The overview fits on one screen: a row with date, start and return, pace and breaks (tap one to
+change it), the time in direct sun, the sky in two lines, and the elevation profile. Drag along
+the profile (or the timeline under it) to see where you are when, and in what light. Three tiles
+preview the detail pages:
+
+- **Stretches:** every stretch of sun or shade, under the profile. Dragging highlights the
+  stretch, and tapping a stretch moves the cursor to it.
+- **Start times:** sun for each start through the day. Tap one to use it.
+- **Which day?:** your plan on each forecast day. Tap one to use it.
+
+- **Breaks.** "Break here" adds one at the profile cursor; the Breaks cell lists them and adds
+  one at a time of the current plan. A break stays at its place when start time or pace change,
+  and its light counts in the totals.
+- **Sky.** Switched on or off in the menu (⋮), and kept that way. When on, nothing is sent
+  until you tap "Check the sky" (the request sends a few points of the route to Open-Meteo).
+  You then get:
   - forecast cloud drawn on the elevation profile, at the heights and times you pass;
-  - each stretch labelled with its sky, and a summary: terrain sun by sky, time in cloud or
-    fog, time above the clouds, and one line of temperature, rain and wind at your altitudes;
+  - each stretch labelled with its sky. The sky page adds a summary: terrain sun by sky, time
+    in cloud or fog, time above the clouds, and temperature, rain and wind at your altitudes;
   - a sky icon on each start time (the ranking stays by terrain sun);
-  - "Which day?": your plan on each forecast day, with terrain sun and the sky over it.
+  - the "Which day?" page.
 - **Show on OsmAnd's map** imports one track per kind of light, coloured, with waypoints where
   the light changes and at breaks. They go to OsmAnd's `tracks/ridgelight-*.gpx` and are
   replaced on each run.
