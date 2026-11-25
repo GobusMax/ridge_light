@@ -1,0 +1,5 @@
+* German translation; the app follows the phone's language (or the per-app language on Android 13+)
+* Screen reader support: every control is labelled, and the elevation profile works like a slider, with jumps to the next change of light or break
+* Readable with large fonts, in dark mode and with higher contrast
+* A failed forecast refresh keeps the forecast you have
+* Signed with Ridge Light's own release key: uninstall older test versions first

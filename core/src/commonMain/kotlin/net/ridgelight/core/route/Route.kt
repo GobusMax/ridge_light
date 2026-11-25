@@ -23,7 +23,10 @@ data class RoutePoint(
     val latLon get() = LatLon(lat, lon)
 }
 
-class RouteException(message: String) : IllegalArgumentException(message)
+/** A track that cannot be analysed; [reason] lets front ends word it themselves, [message] is English. */
+class RouteException(val reason: Reason, message: String) : IllegalArgumentException(message) {
+    enum class Reason { NOT_GPX, NO_POINTS, BAD_COORDINATES, TOO_SHORT, TOO_LONG }
+}
 
 /**
  * A continuous route: consecutive near-duplicate points removed, cumulative distances attached.
@@ -55,7 +58,7 @@ class Route private constructor(
                 var firstOfSegment = true
                 for (p in segment) {
                     if (!p.lat.isFinite() || !p.lon.isFinite() || abs(p.lat) > 85.0 || abs(p.lon) > 180.0) {
-                        throw RouteException("The route contains invalid coordinates (${p.lat}, ${p.lon}).")
+                        throw RouteException(RouteException.Reason.BAD_COORDINATES, "The route contains invalid coordinates (${p.lat}, ${p.lon}).")
                     }
                     val last = clean.lastOrNull()
                     if (last != null) {
@@ -68,8 +71,8 @@ class Route private constructor(
                     firstOfSegment = false
                 }
             }
-            if (clean.size < 2 || total < MIN_LENGTH_M) throw RouteException("The route must be at least ${MIN_LENGTH_M.toInt()} m long.")
-            if (total > MAX_LENGTH_M) throw RouteException("Routes longer than ${(MAX_LENGTH_M / 1000).toInt()} km are not supported; split the track.")
+            if (clean.size < 2 || total < MIN_LENGTH_M) throw RouteException(RouteException.Reason.TOO_SHORT, "The route must be at least ${MIN_LENGTH_M.toInt()} m long.")
+            if (total > MAX_LENGTH_M) throw RouteException(RouteException.Reason.TOO_LONG, "Routes longer than ${(MAX_LENGTH_M / 1000).toInt()} km are not supported; split the track.")
             return Route(clean, gaps)
         }
     }

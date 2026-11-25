@@ -1,0 +1,17 @@
+Ridge Light estimates, for a hike you plan, where you walk in direct sun and where the mountains around you put you in their shade, at the time you get there.
+
+Open a GPX track (from OsmAnd: open a track → Share → Ridge Light), pick a date, a start time and your pace, and see:
+
+* how long you will be in the sun, on an elevation profile coloured by the light, to drag along hour by hour
+* which start time through the day gives the most sun
+* breaks at the places you plan them, with their light counted
+* optionally, the cloud forecast combined with the terrain: sun, sun between clouds, or hidden by overcast or fog, and which of the next days is the sunniest
+* the sunny and shaded stretches as coloured tracks on OsmAnd's map
+
+How it works: for each point of the route, Ridge Light looks from your eyes towards the sun across elevation data up to 45 km away, allowing for the curve of the earth. Walking times follow the rule behind hiking-sign times (DIN 33466), scaled by your pace.
+
+Limits: trees, buildings and snow are not modelled, and the elevation data is a few tens of metres coarse.
+
+Privacy: no account, no tracking. Terrain tiles for the area of your route are downloaded from the open Terrain Tiles on AWS. Only while you switch on Clouds, the coordinates of up to six points of your route are sent to Open-Meteo for the forecast. Nothing else leaves the phone.
+
+In English and German.

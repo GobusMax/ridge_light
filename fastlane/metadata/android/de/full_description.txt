@@ -1,0 +1,17 @@
+Ridge Light schätzt für eine geplante Wanderung, wo du in direkter Sonne gehst und wo dich die Berge ringsum in ihren Schatten stellen – zu der Zeit, zu der du dort bist.
+
+Öffne einen GPX-Track (aus OsmAnd: Track öffnen → Teilen → Ridge Light), wähle Datum, Startzeit und Tempo, und sieh:
+
+* wie lange du in der Sonne bist, auf einem nach Licht eingefärbten Höhenprofil, an dem du Stunde für Stunde entlangziehen kannst
+* welche Startzeit über den Tag am meisten Sonne bringt
+* Pausen an den Orten, an denen du sie planst, mit ihrem Licht in den Summen
+* auf Wunsch die Wolkenprognose zusammen mit dem Gelände: Sonne, Sonne zwischen Wolken oder verdeckt durch Bewölkung oder Nebel – und welcher der nächsten Tage am sonnigsten ist
+* die sonnigen und schattigen Abschnitte als farbige Tracks auf der Karte von OsmAnd
+
+So funktioniert es: Für jeden Punkt der Route schaut Ridge Light aus Augenhöhe Richtung Sonne über Höhendaten bis 45 km weit und berücksichtigt die Erdkrümmung. Die Gehzeiten folgen der Regel hinter den Wegweiserzeiten (DIN 33466), angepasst an dein Tempo.
+
+Grenzen: Bäume, Gebäude und Schnee werden nicht berücksichtigt, und die Höhendaten haben eine Auflösung von einigen zehn Metern.
+
+Datenschutz: kein Konto, kein Tracking. Geländekacheln für das Gebiet deiner Route werden von den offenen Terrain Tiles auf AWS geladen. Nur wenn du Wolken einschaltest, werden die Koordinaten von bis zu sechs Punkten deiner Route für die Prognose an Open-Meteo gesendet. Sonst verlässt nichts das Telefon.
+
+Auf Deutsch und Englisch.

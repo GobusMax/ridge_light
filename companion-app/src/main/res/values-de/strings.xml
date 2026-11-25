@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="share_target">Sonne &amp; Schatten (Ridge Light)</string>
+
+    <!-- Formate -->
+    <string name="day_pattern">EEE, d. MMM</string>
+    <string name="short_day_pattern">EEE, d.</string>
+    <string name="duration_hours">%1$d h %2$d min</string>
+    <string name="duration_minutes">%d min</string>
+    <string name="duration_whole_hours">%d h</string>
+    <plurals name="spoken_hours">
+        <item quantity="one">%d Stunde</item>
+        <item quantity="other">%d Stunden</item>
+    </plurals>
+    <plurals name="spoken_minutes">
+        <item quantity="one">%d Minute</item>
+        <item quantity="other">%d Minuten</item>
+    </plurals>
+    <string name="km">km %s</string>
+    <string name="km_range">km %1$s–%2$s</string>
+    <string name="metres">%d m</string>
+
+    <!-- Licht -->
+    <string name="light_sun">Sonne</string>
+    <string name="light_sun_and_clouds">Sonne und Wolken</string>
+    <string name="light_clouded">Hinter Wolken</string>
+    <string name="light_shade">Geländeschatten</string>
+    <string name="light_dark">Sonne unter dem Horizont</string>
+    <string name="light_unknown">Unbekannt</string>
+    <string name="light_in_fog">Im Nebel, Sonne verdeckt</string>
+    <string name="light_above_clouds">Sonne, über den Wolken</string>
+    <string name="sky_clear">klarer Himmel</string>
+    <string name="sky_thin">dünne hohe Wolken</string>
+    <string name="sky_partly">teils bewölkt</string>
+    <string name="sky_overcast">bedeckt</string>
+    <string name="sky_fog">im Nebel</string>
+    <string name="sky_short_clear">klar</string>
+    <string name="sky_short_thin">dünn</string>
+    <string name="sky_short_partly">aufgelockert</string>
+    <string name="sky_short_overcast">bedeckt</string>
+    <string name="sky_short_fog">Nebel</string>
+    <string name="sun_phrase_both">%1$s Sonne +%2$s</string>
+    <string name="sun_phrase_sun">%s Sonne</string>
+    <string name="sun_phrase_between">%s zwischen Wolken</string>
+    <string name="sun_phrase_none">keine Sonne</string>
+    <string name="spoken_sun_both">%1$s Sonne und %2$s Sonne zwischen Wolken</string>
+    <string name="spoken_sun">%s Sonne</string>
+    <string name="spoken_between">%s Sonne zwischen Wolken</string>
+
+    <!-- Hauptseite -->
+    <string name="open_gpx">GPX öffnen</string>
+    <string name="more_options">Weitere Optionen</string>
+    <string name="time_zone">Zeitzone</string>
+    <string name="about">Über die App</string>
+    <string name="reading_route">Route wird gelesen…</string>
+    <string name="loading_terrain">Gelände wird geladen %1$d/%2$d</string>
+    <plurals name="missing_tiles">
+        <item quantity="one">%d Geländekachel konnte nicht geladen werden; das betroffene Licht ist als unbekannt markiert.</item>
+        <item quantity="other">%d Geländekacheln konnten nicht geladen werden; das betroffene Licht ist als unbekannt markiert.</item>
+    </plurals>
+    <string name="gaps_note">Lücken zwischen Tracksegmenten werden als gerade Linien angenommen.</string>
+    <string name="route_stats">%1$s km · ↑%2$d ↓%3$d m</string>
+    <string name="route_stats_spoken">%1$s km, %2$d m hinauf, %3$d m hinunter</string>
+    <string name="intro_title">Sieh, wo die Berge auf deiner Wanderung die Sonne verdecken.</string>
+    <string name="intro_text">Öffne einen GPX-Track, wähle Datum und Startzeit, und Ridge Light schätzt, wann du in direkter Sonne oder im Geländeschatten gehst, und zeigt das Ergebnis auf der Karte von OsmAnd.</string>
+    <string name="intro_osmand">Aus OsmAnd: Track öffnen → Teilen → Ridge Light.</string>
+    <string name="open_gpx_file">GPX-Datei öffnen</string>
+    <string name="open_another_file">Andere Datei öffnen</string>
+
+    <string name="plan_date">Datum</string>
+    <string name="plan_start_back">Start – zurück</string>
+    <string name="plan_start">Start</string>
+    <string name="plan_pace">Tempo</string>
+    <string name="plan_breaks">Pausen</string>
+    <string name="plan_no_breaks">Keine</string>
+    <string name="change">ändern</string>
+    <plurals name="spoken_breaks">
+        <item quantity="one">%d Pause</item>
+        <item quantity="other">%d Pausen</item>
+    </plurals>
+    <string name="plan_line">%1$s · Start %2$s · Tempo %3$s</string>
+
+    <string name="in_sun">in der Sonne</string>
+    <string name="status_loading">Wolkenprognose wird geladen…</string>
+    <string name="status_terrain_share">%d %% der Wanderung · nur Gelände</string>
+    <string name="retry">Wiederholen</string>
+    <string name="status_no_forecast_for_date">Für dieses Datum noch keine Wolkenprognose · nur Gelände</string>
+    <string name="status_terrain_alone">Nur Gelände %s</string>
+    <string name="status_only_between">Zwischen Wolken · nur Gelände %s</string>
+    <string name="status_plus_between">+ zwischen Wolken · nur Gelände %s</string>
+    <string name="clouds">Wolken</string>
+    <string name="terrain">Gelände</string>
+    <string name="reading_the_profile">Das Profil lesen</string>
+    <string name="drag_hint">Am Profil entlangziehen</string>
+    <string name="clouds_note_off">aus</string>
+    <string name="clouds_note_loading">lädt…</string>
+    <string name="clouds_note_none">keine Prognose</string>
+    <string name="clouds_note_not_yet">für dieses Datum noch keine Prognose</string>
+
+    <string name="profile_bars_info">Balken Gelände: Sonne und Schatten allein durch die Berge. Balken Wolken: der Himmel über dir, wenn du dort bist:</string>
+    <string name="profile_use_info">Zieh am Profil oder an den Balken entlang, um der Wanderung zu folgen; nahe einer Pause (Ring) springt der Cursor zu ihr. Die Marken darunter zeigen, wo du zu jeder vollen Stunde bist.</string>
+    <string name="clouds_info_what">Verbindet das Gelände mit der Wolkenprognose auf deiner Höhe und zu deiner Zeit: Bei klarem Himmel bleibt Sonne Sonne, bei aufgelockerter Bewölkung wird sie zu „Sonne und Wolken“, bedeckter Himmel oder Nebel verdecken sie.</string>
+    <string name="clouds_info_source">Die Prognose kommt von Open-Meteo, für bis zu sechs Punkte deiner Route, und wird drei Stunden lang aufbewahrt.</string>
+    <string name="clouds_info_fog">%1$s im Nebel oder in Wolken (%2$s).</string>
+    <string name="clouds_info_above">%s der Sonne über einem Wolkenmeer.</string>
+    <string name="forecast_from">Prognose von %s</string>
+    <string name="refresh">Aktualisieren</string>
+    <string name="clouds_info_trust">Prognosemodelle rechnen auf einem Raster von einigen Kilometern und auf Höhenstufen, die einige hundert Meter auseinanderliegen, verorten tiefen Nebel oft falsch und werden mehr als eine Woche im Voraus ungenau. %s.</string>
+
+    <string name="readout_break">☕ Pause %1$s–%2$s · %3$s</string>
+    <string name="readout_break_spoken">Pause %1$s bis %2$s, %3$s</string>
+    <string name="readout_place">%1$s · %2$s</string>
+    <string name="readout_sun_up">Sonne %d° hoch</string>
+    <string name="break_here">☕ Hier Pause</string>
+
+    <string name="start_times">Startzeiten</string>
+    <string name="which_day">Welcher Tag?</string>
+    <string name="best">Am besten %s</string>
+    <string name="no_sun">Keine Sonne</string>
+    <string name="at_any_start">bei jedem Start</string>
+    <string name="needs_clouds">Braucht Wolken</string>
+    <string name="needs_clouds_text">Schalte Wolken ein, um die Prognosetage zu vergleichen</string>
+    <string name="no_forecast">Keine Prognose</string>
+    <string name="tap_to_retry">Tippen für neuen Versuch</string>
+    <string name="little_sun">Wenig Sonne</string>
+    <string name="in_the_forecast">in der Prognose</string>
+    <string name="show_on_osmand">Auf der Karte von OsmAnd zeigen</string>
+    <string name="install_osmand">Installiere OsmAnd, um die sonnigen und schattigen Abschnitte auf der Karte zu sehen.</string>
+
+    <!-- Bedienungshilfen -->
+    <string name="back">Zurück</string>
+    <string name="explain">Erklärung</string>
+    <string name="explain_topic">Erklärung: %s</string>
+    <string name="profile_description">Höhenprofil, nach Licht eingefärbt. %s.</string>
+    <string name="profile_next_change">Nächster Lichtwechsel</string>
+    <string name="profile_previous_change">Vorheriger Lichtwechsel</string>
+    <string name="profile_next_break">Nächste Pause</string>
+    <string name="best_spoken">am meisten Sonne</string>
+
+    <!-- Probleme -->
+    <string name="problem_unreadable">Die Datei konnte nicht gelesen werden.</string>
+    <string name="problem_not_gpx">Das ist keine GPX-Datei.</string>
+    <string name="problem_no_points">Keine Track- oder Routenpunkte gefunden. Wegpunkte allein ergeben keine Route.</string>
+    <string name="problem_bad_coordinates">Die Route enthält ungültige Koordinaten.</string>
+    <string name="problem_too_short">Die Route muss mindestens %d m lang sein.</string>
+    <string name="problem_too_long">Routen über %d km werden nicht unterstützt; teile den Track auf.</string>
+    <string name="problem_no_terrain">Die Geländedaten konnten nicht geladen werden. Prüfe deine Verbindung und versuche es noch einmal.</string>
+    <string name="problem_too_large">Diese Route braucht zu viele Geländedaten. Versuche es mit einem kürzeren Abschnitt.</string>
+    <string name="forecast_none">Keine Prognose: %s.</string>
+    <string name="forecast_not_refreshed">Nicht aktualisiert: %s.</string>
+    <string name="forecast_offline">keine Verbindung</string>
+    <string name="forecast_service">der Wetterdienst antwortete mit %d</string>
+    <string name="forecast_unreadable">die Antwort war nicht lesbar</string>
+    <string name="osmand_not_installed">OsmAnd ist nicht installiert.</string>
+    <string name="osmand_not_connected">Keine Verbindung zu OsmAnd. Öffne OsmAnd einmal und versuche es dann noch einmal.</string>
+    <string name="osmand_allow">Erlaube Ridge Light, Tracks in OsmAnd zu zeigen, und tippe dann noch einmal auf die Schaltfläche.</string>
+    <string name="osmand_refused">OsmAnd hat abgelehnt. Aktiviere Ridge Light in OsmAnd unter Plugins → Verbundene Apps und versuche es dann noch einmal.</string>
+    <string name="route">Route</string>
+
+    <!-- Dialoge -->
+    <string name="done">Fertig</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="pace">Tempo</string>
+    <string name="pace_fast">Schnell</string>
+    <string name="pace_brisk">Zügig</string>
+    <string name="pace_signs">Wegweiser</string>
+    <string name="pace_relaxed">Entspannt</string>
+    <string name="pace_leisurely">Gemütlich</string>
+    <string name="pace_fast_suits">sehr fit, leichtes Gepäck, wenige Stopps</string>
+    <string name="pace_brisk_suits">fit, etwas schneller als die Wegweiser</string>
+    <string name="pace_signs_suits">die Zeiten auf den gelben Wegweisern</string>
+    <string name="pace_relaxed_suits">Fotostopps, oder weniger fit</string>
+    <string name="pace_leisurely_suits">mit Kindern oder schwerem Rucksack</string>
+    <string name="pace_rule">Die Gehzeiten folgen der Regel hinter den Wegweiserzeiten (DIN 33466): 4 km/h in der Ebene, 300 m hinauf oder 500 m hinunter pro Stunde; der längere Anteil zählt ganz, der kürzere halb.</string>
+    <string name="pace_preset_info">%1$s (%2$s): %3$s.</string>
+    <string name="pace_slider_info">Mit dem Schieberegler stellst du jedes Tempo dazwischen ein. Die Zeiten enthalten deine Pausen.</string>
+    <string name="breaks">Pausen</string>
+    <string name="breaks_info_stay">Eine Pause bleibt an ihrem Ort auf der Route, wenn du Startzeit oder Tempo änderst, und das Licht während der Pause zählt in den Summen mit.</string>
+    <string name="breaks_info_add">Um eine an einem bestimmten Ort einzufügen, zieh am Profil entlang und tippe auf „Hier Pause“.</string>
+    <string name="no_breaks">Keine Pausen geplant.</string>
+    <string name="break_row">☕ %1$s · %2$s</string>
+    <string name="remove">Entfernen</string>
+    <string name="add_a_break">Pause einfügen</string>
+    <string name="break_info">Die Pause bleibt an diesem Ort, wenn du Startzeit oder Tempo änderst.</string>
+    <string name="break_at_time">Um %s</string>
+    <string name="break_before_start">Vor deinem Start (%s)</string>
+    <string name="break_after_arrival">Nach deiner Ankunft (%s)</string>
+    <string name="break_at_place">Bei %s</string>
+    <string name="duration">Dauer</string>
+    <string name="add">Einfügen</string>
+    <string name="zone_title">Zeitzone der Wanderung</string>
+    <string name="clouds_dialog_title">Wolken einbeziehen?</string>
+    <string name="clouds_dialog_what">Ridge Light verbindet dann das Gelände mit der Wolkenprognose: Sonne bei klarem Himmel bleibt Sonne, bei aufgelockerter Bewölkung wird sie zu „Sonne und Wolken“, und bedeckter Himmel oder Nebel verdecken sie.</string>
+    <string name="clouds_dialog_sent">Dafür werden die Koordinaten von bis zu sechs Punkten deiner Route an Open-Meteo (open-meteo.com) gesendet, für jede Route, die du öffnest, solange Wolken eingeschaltet ist. Sonst wird nichts gesendet.</string>
+    <string name="turn_on">Einschalten</string>
+
+    <!-- Seiten -->
+    <string name="start_times_info_what">Dein Plan mit jeder Startzeit über den Tag: gleiches Datum, gleiche Route, gleiches Tempo, gleiche Pausen. Tippe auf eine Zeit, um sie zu übernehmen.</string>
+    <string name="start_times_info_clouds">Gelände und Wolkenprognose kombiniert. Die Zahl ist Sonne; nach „+“ Sonne zwischen Wolken.</string>
+    <string name="start_times_info_terrain">Nur aus dem Gelände. Mit eingeschalteten Wolken fließt die Wolkenprognose ein.</string>
+    <string name="start_times_info_best_clouds">★ am meisten Sonne; Sonne zwischen Wolken zählt halb.</string>
+    <string name="start_times_info_best">★ am meisten Sonne.</string>
+    <string name="days_subtitle">Start %1$s · Tempo %2$s</string>
+    <string name="days_info_what">Dein Start, dein Tempo und deine Pausen an jedem Tag der Wolkenprognose, Gelände und Wolken kombiniert. Tippe auf einen Tag, um ihn zu übernehmen.</string>
+    <string name="days_info_numbers">Die Zahl ist Sonne; nach „+“ Sonne zwischen Wolken. ★ am meisten Sonne; Sonne zwischen Wolken zählt halb.</string>
+    <string name="days_info_rough">Tage mehr als eine Woche im Voraus sind grau: Ihre Prognose ist grob.</string>
+    <string name="try_again">Noch einmal versuchen</string>
+
+    <string name="about_tagline">Wann bist du auf deiner Wanderung in der Sonne, und wann verdecken die Berge sie?</string>
+    <string name="about_version">Version %s</string>
+    <string name="about_how">So funktioniert es</string>
+    <string name="about_how_terrain">Gelände: Für jeden Punkt der Route schaut Ridge Light zu der Zeit, zu der du dort bist, aus Augenhöhe Richtung Sonne über Höhendaten bis 45 km weit, berücksichtigt die Erdkrümmung und prüft, ob ein Grat im Weg ist.</string>
+    <string name="about_how_timing">Zeit: deine Startzeit und die Regel hinter den Wegweiserzeiten (DIN 33466: 4 km/h in der Ebene, 300 m hinauf oder 500 m hinunter pro Stunde), angepasst an dein Tempo. Pausen bleiben an ihrem Ort auf der Route.</string>
+    <string name="about_how_clouds">Wolken (wenn eingeschaltet): die prognostizierte Bewölkung in verschiedenen Höhen für einige Punkte der Route, auf deiner Höhe und zu deiner Zeit. Geländesonne unter klarem oder dünn bewölktem Himmel bleibt Sonne; unter aufgelockerter Bewölkung wird sie zu „Sonne und Wolken“, die beim Vergleich von Startzeiten und Tagen halb zählt; bedeckter Himmel oder Nebel verdecken sie.</string>
+    <string name="about_limits">Grenzen</string>
+    <string name="about_limits_terrain">Bäume, Gebäude und Schnee werden nicht berücksichtigt. Die Höhendaten haben eine Auflösung von einigen zehn Metern, enge Schluchten und einzelne Felsen können also fehlen.</string>
+    <string name="about_limits_clouds">Auch Wolkenprognosen sind grob: Die Modelle rechnen auf einem Raster von einigen Kilometern und auf Höhenstufen, die einige hundert Meter auseinanderliegen, verorten tiefen Nebel oft falsch und werden mehr als eine Woche im Voraus ungenau.</string>
+    <string name="about_privacy">Datenschutz</string>
+    <string name="about_privacy_tiles">Kein Konto, kein Tracking. Geländekacheln für das Gebiet deiner Route werden vom Open-Data-Server von Amazon geladen, der dieses Gebiet deshalb sieht; sie bleiben auf dem Telefon gespeichert.</string>
+    <string name="about_privacy_clouds">Nur solange Wolken eingeschaltet ist, werden die Koordinaten von bis zu sechs Punkten deiner Route für die Prognose an Open-Meteo gesendet. Sonst wird nichts gesendet.</string>
+    <string name="about_privacy_osmand">Ergebnisse gehen über die App-Schnittstelle von OsmAnd an OsmAnd, auf dem Telefon.</string>
+    <string name="about_data">Daten</string>
+    <string name="attribution_weather">Wetterdaten von Open-Meteo.com (CC BY 4.0)</string>
+    <string name="attribution_terrain">Geländekacheln: Mapzen/Tilezen auf AWS Open Data (SRTM, GMTED, ETOPO1, NED und weitere)</string>
+    <string name="about_licence">Lizenz</string>
+    <string name="about_licence_text">Freie Software unter der GNU General Public License, Version 3 oder später.</string>
+
+    <!-- Tracks und Wegpunkte in OsmAnd -->
+    <string name="export_track">%1$s · %2$s</string>
+    <string name="export_light_sun">Direkte Sonne</string>
+    <string name="export_light_shade">Geländeschatten</string>
+    <string name="export_light_dark">Unter dem Horizont</string>
+    <string name="export_light_unknown">Unbekannt</string>
+    <string name="export_sun_from">Sonne ab %s</string>
+    <string name="export_shade_from">Schatten ab %s</string>
+    <string name="export_sun_down">Sonne weg ab %s</string>
+    <string name="export_unknown_from">Unbekannt ab %s</string>
+    <string name="export_change_detail">%1$s für %2$s Gehzeit</string>
+    <string name="export_break">Pause %1$s–%2$s</string>
+</resources>

@@ -4,6 +4,7 @@ import net.ridgelight.core.analysis.Light
 import net.ridgelight.core.analysis.SunAnalyzer
 import net.ridgelight.core.dem.TileLevel
 import net.ridgelight.core.geo.LatLon
+import net.ridgelight.core.gpx.ExportLabels
 import net.ridgelight.core.gpx.GpxReader
 import net.ridgelight.core.gpx.IsoTime
 import net.ridgelight.core.gpx.LightStyle
@@ -11,10 +12,12 @@ import net.ridgelight.core.gpx.OsmAndExport
 import net.ridgelight.core.horizon.HorizonParams
 import net.ridgelight.core.pace.Din33466Pace
 import net.ridgelight.core.route.Route
+import net.ridgelight.core.route.RouteException
 import net.ridgelight.core.route.SampledRoute
 import net.ridgelight.core.route.TrackPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ExportTest {
@@ -42,6 +45,23 @@ class ExportTest {
         assertEquals(1, GpxReader.read(files.first { it.light == Light.TERRAIN_SHADE }.gpx).segments.size)
         assertEquals(2, Regex("<wpt ").findAll(sun.gpx).count(), "transitions as waypoints")
         assertEquals("Shade from 12:00", OsmAndExport.transitions(result) { "12:00" }.first().name)
+        assertEquals("Terrain shade for ${LightStyle.duration(result.runs[1].seconds)} of walking", OsmAndExport.transitions(result) { "12:00" }.first().description)
+
+        // Another language: every name comes from the labels.
+        val german = object : ExportLabels {
+            override fun light(light: Light) = if (light == Light.SUN) "Sonne" else "Schatten"
+            override fun change(light: Light, time: String) = "${light(light)} ab $time"
+        }
+        assertEquals("Schatten ab 12:00", OsmAndExport.transitions(result, german) { "12:00" }.first().name)
+        assertTrue(OsmAndExport.files(result, "Weg", german) { "12:00" }.first { it.light == Light.SUN }.gpx.contains("Weg · Sonne"))
+    }
+
+    @Test
+    fun routeErrorsCarryAReason() {
+        val e = assertFailsWith<RouteException> { GpxReader.read("<kml/>") }
+        assertEquals(RouteException.Reason.NOT_GPX, e.reason)
+        assertEquals(RouteException.Reason.TOO_SHORT, assertFailsWith<RouteException> { Route.of(listOf(TrackPoint(46.0, 8.0), TrackPoint(46.0001, 8.0))) }.reason)
+        assertEquals(RouteException.Reason.NO_POINTS, assertFailsWith<RouteException> { GpxReader.read("<gpx><wpt lat=\"46\" lon=\"8\"/></gpx>") }.reason)
     }
 
     @Test

@@ -1,0 +1,5 @@
+* Deutsche Übersetzung; die App folgt der Sprache des Telefons (oder der App-Sprache ab Android 13)
+* Unterstützung für Screenreader: Alle Bedienelemente sind beschriftet, und das Höhenprofil funktioniert wie ein Schieberegler, mit Sprüngen zum nächsten Lichtwechsel oder zur nächsten Pause
+* Gut lesbar mit großer Schrift, im dunklen Design und mit höherem Kontrast
+* Schlägt das Aktualisieren der Prognose fehl, bleibt die bisherige Prognose erhalten
+* Mit dem eigenen Release-Schlüssel von Ridge Light signiert: ältere Testversionen bitte zuerst deinstallieren

@@ -126,7 +126,7 @@ class OsmAndBridge(private val context: Context) {
     private fun registerDrawerItem(api: IOsmAndAidlInterface) {
         runCatching {
             api.setNavDrawerItems(
-                SetNavDrawerItemsParams(context.packageName, listOf(NavDrawerItem("Ridge Light", "ridgelight://open", "ic_action_sun"))),
+                SetNavDrawerItemsParams(context.packageName, listOf(NavDrawerItem(context.getString(R.string.app_name), "ridgelight://open", "ic_action_sun"))),
             )
         }
     }

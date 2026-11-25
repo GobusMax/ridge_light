@@ -1,4 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Ridge Light</string>
+    <string name="app_name" translatable="false">Ridge Light</string>
     <string name="share_target">Sun &amp; shade (Ridge Light)</string>
+
+    <!-- Formats -->
+    <string name="day_pattern">EEE d MMM</string>
+    <string name="short_day_pattern">EEE d</string>
+    <string name="duration_hours">%1$dh %2$02dm</string>
+    <string name="duration_minutes">%d min</string>
+    <string name="duration_whole_hours">%dh 00m</string>
+    <plurals name="spoken_hours">
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
+    <plurals name="spoken_minutes">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
+    <string name="km">km %s</string>
+    <string name="km_range">km %1$s–%2$s</string>
+    <string name="metres">%d m</string>
+
+    <!-- Light -->
+    <string name="light_sun">Sun</string>
+    <string name="light_sun_and_clouds">Sun and clouds</string>
+    <string name="light_clouded">Behind clouds</string>
+    <string name="light_shade">Terrain shade</string>
+    <string name="light_dark">Sun below horizon</string>
+    <string name="light_unknown">Unknown</string>
+    <string name="light_in_fog">In fog, sun hidden</string>
+    <string name="light_above_clouds">Sun, above the clouds</string>
+    <string name="sky_clear">clear sky</string>
+    <string name="sky_thin">thin high cloud</string>
+    <string name="sky_partly">partly cloudy</string>
+    <string name="sky_overcast">overcast</string>
+    <string name="sky_fog">in fog</string>
+    <string name="sky_short_clear">clear</string>
+    <string name="sky_short_thin">thin</string>
+    <string name="sky_short_partly">broken</string>
+    <string name="sky_short_overcast">overcast</string>
+    <string name="sky_short_fog">fog</string>
+    <string name="sun_phrase_both">%1$s sun +%2$s</string>
+    <string name="sun_phrase_sun">%s sun</string>
+    <string name="sun_phrase_between">%s between clouds</string>
+    <string name="sun_phrase_none">no sun</string>
+    <string name="spoken_sun_both">%1$s of sun and %2$s of sun between clouds</string>
+    <string name="spoken_sun">%s of sun</string>
+    <string name="spoken_between">%s of sun between clouds</string>
+
+    <!-- Main page -->
+    <string name="open_gpx">Open GPX</string>
+    <string name="more_options">More options</string>
+    <string name="time_zone">Time zone</string>
+    <string name="about">About</string>
+    <string name="reading_route">Reading route…</string>
+    <string name="loading_terrain">Loading terrain %1$d/%2$d</string>
+    <plurals name="missing_tiles">
+        <item quantity="one">%d terrain tile could not be loaded; affected light shows as unknown.</item>
+        <item quantity="other">%d terrain tiles could not be loaded; affected light shows as unknown.</item>
+    </plurals>
+    <string name="gaps_note">Gaps between track segments are assumed to be straight lines.</string>
+    <string name="route_stats">%1$s km · ↑%2$d ↓%3$d m</string>
+    <string name="route_stats_spoken">%1$s km, %2$d m up, %3$d m down</string>
+    <string name="intro_title">See where the mountains block the sun on your hike.</string>
+    <string name="intro_text">Open a GPX track, pick a date and start time, and Ridge Light estimates when you walk in direct sun or terrain shade, then shows the result on OsmAnd\'s map.</string>
+    <string name="intro_osmand">From OsmAnd: open a track → Share → Ridge Light.</string>
+    <string name="open_gpx_file">Open GPX file</string>
+    <string name="open_another_file">Open another file</string>
+
+    <string name="plan_date">Date</string>
+    <string name="plan_start_back">Start – back</string>
+    <string name="plan_start">Start</string>
+    <string name="plan_pace">Pace</string>
+    <string name="plan_breaks">Breaks</string>
+    <string name="plan_no_breaks">None</string>
+    <string name="change">change</string>
+    <plurals name="spoken_breaks">
+        <item quantity="one">%d break</item>
+        <item quantity="other">%d breaks</item>
+    </plurals>
+    <string name="plan_line">%1$s · start %2$s · pace %3$s</string>
+
+    <string name="in_sun">in sun</string>
+    <string name="status_loading">Loading the cloud forecast…</string>
+    <string name="status_terrain_share">%d %% of the hike · terrain alone</string>
+    <string name="retry">Retry</string>
+    <string name="status_no_forecast_for_date">No cloud forecast for this date yet · terrain alone</string>
+    <string name="status_terrain_alone">Terrain alone %s</string>
+    <string name="status_only_between">Between clouds · terrain alone %s</string>
+    <string name="status_plus_between">+ between clouds · terrain alone %s</string>
+    <string name="clouds">Clouds</string>
+    <string name="terrain">Terrain</string>
+    <string name="reading_the_profile">Reading the profile</string>
+    <string name="drag_hint">Drag along the profile</string>
+    <string name="clouds_note_off">off</string>
+    <string name="clouds_note_loading">loading…</string>
+    <string name="clouds_note_none">no forecast</string>
+    <string name="clouds_note_not_yet">no forecast for this date yet</string>
+
+    <string name="profile_bars_info">Terrain bar: sun and shade from the mountains alone. Clouds bar: the sky above you when you get there:</string>
+    <string name="profile_use_info">Drag along the profile or the bars to follow the hike; near a break (ring) the cursor jumps to it. The marks underneath show where you are at each full hour.</string>
+    <string name="clouds_info_what">Combines the terrain with the cloud forecast at your altitude and time: under a clear sky sun stays sun, under broken cloud it becomes “sun and clouds”, overcast or fog hides it.</string>
+    <string name="clouds_info_source">The forecast comes from Open-Meteo for up to six points of your route and is kept for three hours.</string>
+    <string name="clouds_info_fog">In fog or cloud for %1$s (%2$s).</string>
+    <string name="clouds_info_above">Above a sea of cloud for %s of the sun.</string>
+    <string name="forecast_from">Forecast from %s</string>
+    <string name="refresh">Refresh</string>
+    <string name="clouds_info_trust">Forecast models work on a grid of a few kilometres and on levels a few hundred metres apart, often misplace low fog, and are rough more than a week ahead. %s.</string>
+
+    <string name="readout_break">☕ Break %1$s–%2$s · %3$s</string>
+    <string name="readout_break_spoken">Break %1$s to %2$s, %3$s</string>
+    <string name="readout_place">%1$s · %2$s</string>
+    <string name="readout_sun_up">sun %d° up</string>
+    <string name="break_here">☕ Break here</string>
+
+    <string name="start_times">Start times</string>
+    <string name="which_day">Which day?</string>
+    <string name="best">Best %s</string>
+    <string name="no_sun">No sun</string>
+    <string name="at_any_start">at any start</string>
+    <string name="needs_clouds">Needs Clouds</string>
+    <string name="needs_clouds_text">Switch on Clouds to compare the forecast days</string>
+    <string name="no_forecast">No forecast</string>
+    <string name="tap_to_retry">Tap to try again</string>
+    <string name="little_sun">Little sun</string>
+    <string name="in_the_forecast">in the forecast</string>
+    <string name="show_on_osmand">Show on OsmAnd\'s map</string>
+    <string name="install_osmand">Install OsmAnd to see the sunny and shaded stretches on the map.</string>
+
+    <!-- Accessibility -->
+    <string name="back">Back</string>
+    <string name="explain">Explain</string>
+    <string name="explain_topic">Explain: %s</string>
+    <string name="profile_description">Elevation profile coloured by light. %s.</string>
+    <string name="profile_next_change">Next change of light</string>
+    <string name="profile_previous_change">Previous change of light</string>
+    <string name="profile_next_break">Next break</string>
+    <string name="best_spoken">most sun</string>
+
+    <!-- Problems -->
+    <string name="problem_unreadable">The file could not be read.</string>
+    <string name="problem_not_gpx">This is not a GPX file.</string>
+    <string name="problem_no_points">No track or route points found. Waypoints alone do not make a route.</string>
+    <string name="problem_bad_coordinates">The route contains invalid coordinates.</string>
+    <string name="problem_too_short">The route must be at least %d m long.</string>
+    <string name="problem_too_long">Routes longer than %d km are not supported; split the track.</string>
+    <string name="problem_no_terrain">Terrain data could not be loaded. Check your connection and try again.</string>
+    <string name="problem_too_large">This route needs too much terrain data. Try a shorter section.</string>
+    <string name="forecast_none">No forecast: %s.</string>
+    <string name="forecast_not_refreshed">Not refreshed: %s.</string>
+    <string name="forecast_offline">no connection</string>
+    <string name="forecast_service">the weather service answered %d</string>
+    <string name="forecast_unreadable">the answer could not be read</string>
+    <string name="osmand_not_installed">OsmAnd is not installed.</string>
+    <string name="osmand_not_connected">Could not connect to OsmAnd. Open OsmAnd once, then try again.</string>
+    <string name="osmand_allow">Allow Ridge Light to show tracks in OsmAnd, then tap the button again.</string>
+    <string name="osmand_refused">OsmAnd refused. Enable Ridge Light under OsmAnd → Plugins → Connected apps, then try again.</string>
+    <string name="route">Route</string>
+
+    <!-- Dialogs -->
+    <string name="done">Done</string>
+    <string name="cancel">Cancel</string>
+    <string name="pace">Pace</string>
+    <string name="pace_fast">Fast</string>
+    <string name="pace_brisk">Brisk</string>
+    <string name="pace_signs">Hiking signs</string>
+    <string name="pace_relaxed">Relaxed</string>
+    <string name="pace_leisurely">Leisurely</string>
+    <string name="pace_fast_suits">very fit, light pack, few stops</string>
+    <string name="pace_brisk_suits">fit hikers, a little quicker than the signs</string>
+    <string name="pace_signs_suits">the times on yellow hiking signs</string>
+    <string name="pace_relaxed_suits">photo stops, or less fit</string>
+    <string name="pace_leisurely_suits">with children or a heavy pack</string>
+    <string name="pace_rule">Walking times follow the rule behind hiking-sign times (DIN 33466): 4 km/h on the flat, 300 m up or 500 m down an hour, whichever takes longer plus half the other.</string>
+    <string name="pace_preset_info">%1$s (%2$s): %3$s.</string>
+    <string name="pace_slider_info">The slider sets any pace in between. Times include your breaks.</string>
+    <string name="breaks">Breaks</string>
+    <string name="breaks_info_stay">A break stays at its place on the route when you change the start time or pace, and the light during it counts in the totals.</string>
+    <string name="breaks_info_add">To add one at a place, drag along the profile and tap “Break here”.</string>
+    <string name="no_breaks">No breaks planned.</string>
+    <string name="break_row">☕ %1$s · %2$s</string>
+    <string name="remove">Remove</string>
+    <string name="add_a_break">Add a break</string>
+    <string name="break_info">The break stays at this place when you change the start time or pace.</string>
+    <string name="break_at_time">At %s</string>
+    <string name="break_before_start">Before your start (%s)</string>
+    <string name="break_after_arrival">After you arrive (%s)</string>
+    <string name="break_at_place">At %s</string>
+    <string name="duration">Duration</string>
+    <string name="add">Add</string>
+    <string name="zone_title">Time zone of the hike</string>
+    <string name="clouds_dialog_title">Include the clouds?</string>
+    <string name="clouds_dialog_what">Ridge Light then combines the terrain with the cloud forecast: sun under a clear sky stays sun, under broken cloud it becomes “sun and clouds”, and overcast or fog hides it.</string>
+    <string name="clouds_dialog_sent">For this, the coordinates of up to six points of your route are sent to Open-Meteo (open-meteo.com), for every route you open while Clouds is on. Nothing else is sent.</string>
+    <string name="turn_on">Turn on</string>
+
+    <!-- Pages -->
+    <string name="start_times_info_what">Your plan with each start time through the day: same date, route, pace and breaks. Tap a time to use it.</string>
+    <string name="start_times_info_clouds">Terrain and the cloud forecast combined. The number is sun; after “+”, sun between clouds.</string>
+    <string name="start_times_info_terrain">From the terrain alone. With Clouds switched on, the cloud forecast is included.</string>
+    <string name="start_times_info_best_clouds">★ most sun, with sun between clouds counted half.</string>
+    <string name="start_times_info_best">★ most sun.</string>
+    <string name="days_subtitle">Start %1$s · pace %2$s</string>
+    <string name="days_info_what">Your start, pace and breaks on each day of the cloud forecast, terrain and clouds combined. Tap a day to use it.</string>
+    <string name="days_info_numbers">The number is sun; after “+”, sun between clouds. ★ most sun, with sun between clouds counted half.</string>
+    <string name="days_info_rough">Days more than a week ahead are greyed: their forecast is rough.</string>
+    <string name="try_again">Try again</string>
+
+    <string name="about_tagline">When are you in the sun on your hike, and when do the mountains hide it?</string>
+    <string name="about_version">Version %s</string>
+    <string name="about_how">How it works</string>
+    <string name="about_how_terrain">Terrain: for each point of the route, at the time you get there, Ridge Light looks from your eyes towards the sun across elevation data up to 45 km away, allowing for the curve of the earth, and checks whether a ridge is in the way.</string>
+    <string name="about_how_timing">Timing: your start time and the rule behind hiking-sign times (DIN 33466: 4 km/h on the flat, 300 m up or 500 m down an hour), scaled by your pace. Breaks stay at their place on the route.</string>
+    <string name="about_how_clouds">Clouds (when switched on): the forecast cloud cover at different heights for a few points of the route, at your altitude and time. Terrain sun under a clear or thin sky stays sun; under broken cloud it becomes “sun and clouds”, counted half when comparing start times and days; overcast or fog hides it.</string>
+    <string name="about_limits">Limits</string>
+    <string name="about_limits_terrain">Trees, buildings and snow are not modelled. The elevation data is a few tens of metres coarse, so narrow gorges and single rocks can be missed.</string>
+    <string name="about_limits_clouds">Cloud forecasts are coarse too: models work on a grid of a few kilometres and on levels a few hundred metres apart, often misplace low fog, and get rough more than a week ahead.</string>
+    <string name="about_privacy">Privacy</string>
+    <string name="about_privacy_tiles">No account, no tracking. Terrain tiles for the area of your route are downloaded from Amazon\'s open-data server, which therefore sees that area; they are kept on the phone.</string>
+    <string name="about_privacy_clouds">Only while Clouds is on, the coordinates of up to six points of your route are sent to Open-Meteo for the forecast. Nothing else is sent.</string>
+    <string name="about_privacy_osmand">Results go to OsmAnd through its app interface, on the phone.</string>
+    <string name="about_data">Data</string>
+    <string name="attribution_weather">Weather data by Open-Meteo.com (CC BY 4.0)</string>
+    <string name="attribution_terrain">Terrain Tiles: Mapzen/Tilezen on AWS Open Data (SRTM, GMTED, ETOPO1, NED and others)</string>
+    <string name="about_licence">Licence</string>
+    <string name="about_licence_text">Free software under the GNU General Public License, version 3 or later.</string>
+
+    <!-- Tracks and waypoints in OsmAnd -->
+    <string name="export_track">%1$s · %2$s</string>
+    <string name="export_light_sun">Direct sun</string>
+    <string name="export_light_shade">Terrain shade</string>
+    <string name="export_light_dark">Below horizon</string>
+    <string name="export_light_unknown">Unknown</string>
+    <string name="export_sun_from">Sun from %s</string>
+    <string name="export_shade_from">Shade from %s</string>
+    <string name="export_sun_down">Sun down %s</string>
+    <string name="export_unknown_from">Unknown from %s</string>
+    <string name="export_change_detail">%1$s for %2$s of walking</string>
+    <string name="export_break">Break %1$s–%2$s</string>
 </resources>

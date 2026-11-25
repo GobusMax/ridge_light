@@ -1,20 +1,21 @@
 package net.ridgelight.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -26,18 +27,27 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import net.ridgelight.app.R
 import net.ridgelight.app.UiState
 import net.ridgelight.app.WeatherState
-import net.ridgelight.core.dem.Terrarium
-import net.ridgelight.core.weather.OpenMeteo
+import net.ridgelight.core.weather.SkyLight
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -59,13 +69,13 @@ private fun DetailScaffold(
             TopAppBar(
                 title = {
                     Column {
-                        Text(title)
+                        Text(title, Modifier.semantics { heading() })
                         subtitle?.let {
                             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 },
-                navigationIcon = { IconButton(onClick = back) { Icon(AppIcons.Back, "Back") } },
+                navigationIcon = { IconButton(onClick = back) { Icon(AppIcons.Back, stringResource(R.string.back)) } },
                 actions = { info?.let { InfoButton(title, Modifier.padding(end = 8.dp), it) } },
             )
         },
@@ -76,43 +86,62 @@ private fun DetailScaffold(
 private fun listPadding(padding: PaddingValues) =
     PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 24.dp)
 
-/** A row that can be picked; [chosen] is highlighted. */
+/** A row that can be picked, read out as [spoken]; [chosen] is highlighted. */
 @Composable
-private fun PickRow(chosen: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+private fun PickRow(chosen: Boolean, spoken: String, modifier: Modifier = Modifier, onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .background(if (chosen) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
+            .selectable(chosen, role = Role.RadioButton, onClick = onClick)
+            .semantics { contentDescription = spoken }
             .padding(horizontal = 6.dp, vertical = 7.dp)
             .then(modifier),
-        content = content,
-    )
+    ) {
+        Row(Modifier.hiddenFromReaders(), verticalAlignment = Alignment.CenterVertically, content = content)
+    }
 }
 
-/** Light bar, sun (and sun between clouds) and a star: one start time or day. */
+/** Light bar, sun (and sun between clouds) and a star: one start time or day. [textWidth] fits every row's sun text. */
 @Composable
-private fun RowScope.Comparison(combined: Map<net.ridgelight.core.weather.SkyLight, Double>, best: Boolean) {
+private fun RowScope.Comparison(combined: Map<SkyLight, Double>, best: Boolean, textWidth: Dp) {
     SegmentBar(segments(combined), Modifier.weight(1f).height(10.dp))
-    Text(sunText(combined), Modifier.width(108.dp).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+    Text(words.sunText(combined), Modifier.width(textWidth).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1)
     Text(if (best) "★" else "", Modifier.width(16.dp), color = MaterialTheme.colorScheme.secondary)
 }
+
+/** The width of the widest sun text among [totals], so all rows line up in any language or font size. */
+@Composable
+private fun sunTextWidth(totals: List<Map<SkyLight, Double>>): Dp {
+    val w = words
+    val measurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.bodySmall
+    val density = LocalDensity.current
+    return remember(totals, w, style, density) {
+        val widest = totals.maxOfOrNull { measurer.measure(w.sunText(it), style).size.width } ?: 0
+        with(density) { widest.toDp() } + 12.dp
+    }
+}
+
+/** "09:00, 2 hours 40 minutes of sun, most sun". */
+private fun spokenRow(label: String, combined: Map<SkyLight, Double>, best: Boolean, w: Words) =
+    listOfNotNull(label, w.spokenSun(combined), w.get(R.string.best_spoken).takeIf { best }).joinToString(", ")
 
 /** Sun for each start time of the day; tapping one makes it the plan's start. */
 @Composable
 fun StartTimesScreen(state: UiState, localTime: (Long) -> String, pick: (LocalTime) -> Unit, back: () -> Unit) =
-    DetailScaffold("Start times", planLine(state.settings), back, info = {
+    DetailScaffold(stringResource(R.string.start_times), words.planLine(state.settings), back, info = {
         val withClouds = state.sweep?.any { it.skyTotals != null } == true
-        InfoText("Your plan with each start time through the day: same date, route, pace and breaks. Tap a time to use it.")
-        InfoText(
-            if (withClouds) "Terrain and the cloud forecast combined. The number is sun; after “+”, sun between clouds."
-            else "From the terrain alone. With Clouds switched on, the cloud forecast is included.",
-        )
-        InfoText("★ most sun" + if (withClouds) ", with sun between clouds counted half." else ".")
+        InfoText(stringResource(R.string.start_times_info_what))
+        InfoText(stringResource(if (withClouds) R.string.start_times_info_clouds else R.string.start_times_info_terrain))
+        InfoText(stringResource(if (withClouds) R.string.start_times_info_best_clouds else R.string.start_times_info_best))
     }) { padding ->
+        val w = words
         val sweep = state.sweep
-        LazyColumn(contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        val textWidth = sunTextWidth(sweep.orEmpty().map { it.combined })
+        LazyColumn(Modifier.selectableGroup(), contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (sweep == null) {
                 item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 return@LazyColumn
@@ -121,9 +150,10 @@ fun StartTimesScreen(state: UiState, localTime: (Long) -> String, pick: (LocalTi
             items(sweep) { e ->
                 val time = Instant.ofEpochMilli(e.departureUtc).atZone(state.settings.zone).toLocalTime()
                 val chosen = time == state.settings.start
-                PickRow(chosen, onClick = { pick(time) }) {
-                    Text(localTime(e.departureUtc), Modifier.width(52.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
-                    Comparison(e.combined, e === best)
+                val label = localTime(e.departureUtc)
+                PickRow(chosen, spokenRow(label, e.combined, e === best, w), onClick = { pick(time) }) {
+                    Text(label, Modifier.width(52.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
+                    Comparison(e.combined, e === best, textWidth)
                 }
             }
         }
@@ -132,19 +162,26 @@ fun StartTimesScreen(state: UiState, localTime: (Long) -> String, pick: (LocalTi
 /** The plan on each forecast day; tapping one makes it the plan's date. */
 @Composable
 fun DaysScreen(state: UiState, pick: (LocalDate) -> Unit, retry: () -> Unit, back: () -> Unit) =
-    DetailScaffold("Which day?", "Start ${state.settings.start} · pace ${paceName(state.settings.paceFactor)}", back, info = {
-        InfoText("Your start, pace and breaks on each day of the cloud forecast, terrain and clouds combined. Tap a day to use it.")
-        InfoText("The number is sun; after “+”, sun between clouds. ★ most sun, with sun between clouds counted half.")
-        InfoText("Days more than a week ahead are greyed: their forecast is rough.")
-        Text(OpenMeteo.ATTRIBUTION, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }) { padding ->
-        LazyColumn(contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    DetailScaffold(
+        stringResource(R.string.which_day),
+        stringResource(R.string.days_subtitle, state.settings.start.format(words.clock), words.paceName(state.settings.paceFactor)),
+        back,
+        info = {
+            InfoText(stringResource(R.string.days_info_what))
+            InfoText(stringResource(R.string.days_info_numbers))
+            InfoText(stringResource(R.string.days_info_rough))
+            Text(stringResource(R.string.attribution_weather), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        },
+    ) { padding ->
+        val w = words
+        val textWidth = sunTextWidth(state.days.orEmpty().map { it.combined })
+        LazyColumn(Modifier.selectableGroup(), contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val weather = state.weather
             val days = state.days
             when {
                 weather is WeatherState.Unavailable -> item {
-                    Text(weather.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = retry) { Text("Try again") }
+                    Text(w.problem(weather.problem), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = retry) { Text(stringResource(R.string.try_again)) }
                 }
                 weather !is WeatherState.Ready || days == null -> item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 else -> {
@@ -152,10 +189,11 @@ fun DaysScreen(state: UiState, pick: (LocalDate) -> Unit, retry: () -> Unit, bac
                     val best = days.maxByOrNull { it.expectedSun }?.takeIf { it.expectedSun >= 600 }
                     items(days) { d ->
                         val chosen = d.date == state.settings.date
+                        val label = d.date.format(w.day)
                         // Forecasts lose skill after about a week.
-                        PickRow(chosen, Modifier.alpha(if (d.date > today.plusDays(7)) 0.55f else 1f), onClick = { pick(d.date) }) {
-                            Text(d.date.format(dayFormat), Modifier.width(100.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
-                            Comparison(d.combined, d === best)
+                        PickRow(chosen, spokenRow(label, d.combined, d === best, w), Modifier.alpha(if (d.date > today.plusDays(7)) 0.6f else 1f), onClick = { pick(d.date) }) {
+                            Text(label, Modifier.width(100.dp), fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
+                            Comparison(d.combined, d === best, textWidth)
                         }
                     }
                 }
@@ -165,56 +203,43 @@ fun DaysScreen(state: UiState, pick: (LocalDate) -> Unit, retry: () -> Unit, bac
 
 /** What the app does, how far to trust it, what leaves the phone, and where the data comes from. */
 @Composable
-fun AboutScreen(back: () -> Unit) = DetailScaffold("About", null, back) { padding ->
+fun AboutScreen(back: () -> Unit) = DetailScaffold(stringResource(R.string.about), null, back) { padding ->
     val context = LocalContext.current
     val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
     LazyColumn(contentPadding = listPadding(padding), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Text("Ridge Light", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall)
             Text(
-                "When are you in the sun on your hike, and when do the mountains hide it?" + (version?.let { "\nVersion $it" } ?: ""),
+                stringResource(R.string.about_tagline) + (version?.let { "\n" + stringResource(R.string.about_version, it) } ?: ""),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
         item {
             AboutPart(
-                "How it works",
-                "Terrain: for each point of the route, at the time you get there, Ridge Light looks from your eyes towards the sun across " +
-                    "elevation data up to 45 km away, allowing for the curve of the earth, and checks whether a ridge is in the way.",
-                "Timing: your start time and the rule behind hiking-sign times (DIN 33466: 4 km/h on the flat, 300 m up or 500 m down an hour), " +
-                    "scaled by your pace. Breaks stay at their place on the route.",
-                "Clouds (when switched on): the forecast cloud cover at different heights for a few points of the route, at your altitude and " +
-                    "time. Terrain sun under a clear or thin sky stays sun; under broken cloud it becomes “sun and clouds”, counted half when " +
-                    "comparing start times and days; overcast or fog hides it.",
+                stringResource(R.string.about_how),
+                stringResource(R.string.about_how_terrain),
+                stringResource(R.string.about_how_timing),
+                stringResource(R.string.about_how_clouds),
             )
         }
+        item { AboutPart(stringResource(R.string.about_limits), stringResource(R.string.about_limits_terrain), stringResource(R.string.about_limits_clouds)) }
         item {
             AboutPart(
-                "Limits",
-                "Trees, buildings and snow are not modelled. The elevation data is a few tens of metres coarse, so narrow gorges and single " +
-                    "rocks can be missed.",
-                "Cloud forecasts are coarse too: models work on a grid of a few kilometres and on levels a few hundred metres apart, often " +
-                    "misplace low fog, and get rough more than a week ahead.",
+                stringResource(R.string.about_privacy),
+                stringResource(R.string.about_privacy_tiles),
+                stringResource(R.string.about_privacy_clouds),
+                stringResource(R.string.about_privacy_osmand),
             )
         }
-        item {
-            AboutPart(
-                "Privacy",
-                "No account, no tracking. Terrain tiles for the area of your route are downloaded from Amazon's open-data server, which therefore sees that area; they are kept on the phone.",
-                "Only while Clouds is on, the coordinates of up to six points of your route are sent to Open-Meteo for the forecast. Nothing else is sent.",
-                "Results go to OsmAnd through its app interface, on the phone.",
-            )
-        }
-        item {
-            AboutPart("Data", "${Terrarium.ATTRIBUTION}.", "${OpenMeteo.ATTRIBUTION}.")
-        }
+        item { AboutPart(stringResource(R.string.about_data), stringResource(R.string.attribution_terrain) + ".", stringResource(R.string.attribution_weather) + ".") }
+        item { AboutPart(stringResource(R.string.about_licence), stringResource(R.string.about_licence_text)) }
     }
 }
 
 @Composable
 private fun AboutPart(title: String, vararg paragraphs: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         for (p in paragraphs) Text(p, style = MaterialTheme.typography.bodyMedium)
     }
 }

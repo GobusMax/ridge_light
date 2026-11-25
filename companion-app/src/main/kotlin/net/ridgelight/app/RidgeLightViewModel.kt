@@ -37,7 +37,8 @@ import net.ridgelight.core.weather.Sky
 import net.ridgelight.core.weather.SkyLight
 import net.ridgelight.core.weather.SkyModel
 import net.ridgelight.core.weather.SkyReport
-import net.ridgelight.core.weather.WeatherException
+import net.ridgelight.core.weather.OpenMeteo
+import net.ridgelight.app.ui.Words
 import net.ridgelight.dem.TerrainTileCache
 import java.time.Instant
 import java.time.LocalDate
@@ -45,9 +46,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.io.File
 import kotlin.math.log2
-import kotlin.math.roundToInt
 
 /** A planned stop at a place on the route, [distance] metres from the start. */
 data class PlannedBreak(val distance: Double, val minutes: Int)
@@ -69,8 +68,14 @@ sealed interface Phase {
     data object Reading : Phase
     data class LoadingTerrain(val done: Int, val total: Int) : Phase
     data object Ready : Phase
-    data class Failed(val message: String) : Phase
+    data class Failed(val problem: LoadProblem) : Phase
 }
+
+/** Why a track could not be opened; the UI words it. */
+enum class LoadProblem { UNREADABLE, NOT_GPX, NO_POINTS, BAD_COORDINATES, TOO_SHORT, TOO_LONG, NO_TERRAIN, TOO_LARGE }
+
+/** Why the tracks did not reach OsmAnd's map. */
+enum class OsmAndProblem { NOT_INSTALLED, NOT_CONNECTED, ASK_PERMISSION, REFUSED }
 
 data class RouteInfo(val name: String, val sampled: SampledRoute, val missingTiles: Int)
 
@@ -79,7 +84,7 @@ sealed interface WeatherState {
     data object Idle : WeatherState
     data object Loading : WeatherState
     data class Ready(val forecast: RouteForecast, val fetchedAt: Long) : WeatherState
-    data class Unavailable(val message: String) : WeatherState
+    data class Unavailable(val problem: ForecastException) : WeatherState
 }
 
 /** One day in the "which day" list: the planned hike on that day, terrain and clouds combined. */
@@ -100,7 +105,9 @@ data class UiState(
     val sky: SkyReport? = null,
     /** Forecast days for the planned start, pace and breaks. */
     val days: List<DayEntry>? = null,
-    val osmandMessage: String? = null,
+    /** Why the last Refresh failed, while the older forecast stays in use. */
+    val refreshProblem: ForecastException? = null,
+    val osmandProblem: OsmAndProblem? = null,
     val osmandInstalled: Boolean = false,
 )
 
@@ -109,10 +116,10 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
     private val tiles = TerrainTileCache(app)
     val osmand = OsmAndBridge(app)
 
-    private val prefs = app.getSharedPreferences("ridgelight", Application.MODE_PRIVATE)
+    private val store = PlanStore(app.getSharedPreferences("ridgelight", Application.MODE_PRIVATE), app.filesDir)
 
     private val _state = MutableStateFlow(
-        UiState(osmandInstalled = osmand.installedPackage() != null, cloudsEnabled = prefs.getBoolean(PREF_CLOUDS, false)),
+        UiState(osmandInstalled = osmand.installedPackage() != null, cloudsEnabled = store.cloudsEnabled),
     )
     val state: StateFlow<UiState> = _state
 
@@ -142,9 +149,6 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshOsmAnd() = _state.update { it.copy(osmandInstalled = osmand.installedPackage() != null) }
 
-    /** A copy of the last opened track (content links from other apps do not outlive a restart). */
-    private val lastTrack = File(app.filesDir, "last.gpx")
-
     fun open(uri: Uri) {
         val app = getApplication<Application>()
         load(
@@ -157,8 +161,8 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Reopens the last track with its plan when the app starts with nothing else to open. */
     fun reopenLast() {
-        if (_state.value.phase != Phase.Idle || !lastTrack.exists()) return
-        load({ lastTrack.readText() }, prefs.getString(PREF_LAST_NAME, null), savedPlan(), keep = false)
+        if (_state.value.phase != Phase.Idle || !store.lastTrack.exists()) return
+        load({ store.lastTrack.readText() }, store.lastName, store.load(), keep = false)
     }
 
     /**
@@ -172,46 +176,56 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         _scrub.value = 0.0
         _state.update {
             it.copy(
-                phase = Phase.Reading, route = null, result = null, sweep = null, osmandMessage = null,
-                weather = WeatherState.Idle, sky = null, days = null, settings = plan ?: it.settings.copy(breaks = emptyList()),
+                phase = Phase.Reading, route = null, result = null, sweep = null, osmandProblem = null,
+                weather = WeatherState.Idle, refreshProblem = null, sky = null, days = null, settings = plan ?: it.settings.copy(breaks = emptyList()),
             )
         }
         loadJob = viewModelScope.launch {
             try {
-                val text = withContext(Dispatchers.IO) { runCatching(read).getOrNull() } ?: throw RouteException("The file could not be read.")
+                val text = withContext(Dispatchers.IO) { runCatching(read).getOrNull() } ?: return@launch fail(LoadProblem.UNREADABLE)
                 val gpx = withContext(Dispatchers.Default) { GpxReader.read(text) }
                 val route = Route.ofSegments(gpx.segments)
                 val keys = TilePlanner.forRoute(route.points.map { it.latLon })
                 _state.update { it.copy(phase = Phase.LoadingTerrain(0, keys.size)) }
                 val loaded = tiles.load(keys) { done, total -> _state.update { it.copy(phase = Phase.LoadingTerrain(done, total)) } }
-                if (loaded.tiles.isEmpty()) throw RouteException("Terrain data could not be loaded. Check your connection and try again.")
+                if (loaded.tiles.isEmpty()) return@launch fail(LoadProblem.NO_TERRAIN)
                 val (sampled, newAnalyzer) = withContext(analysisThread) {
                     val terrain = TerrainModel(loaded.tiles)
                     val s = SampledRoute.of(route, terrain)
                     s to SunAnalyzer(s, terrain, runner = workers)
                 }
                 analyzer = newAnalyzer
-                val name = gpx.name ?: fallbackName ?: "Route"
+                val name = gpx.name ?: fallbackName ?: getApplication<Application>().getString(R.string.route)
                 if (keep) {
-                    withContext(Dispatchers.IO) { runCatching { lastTrack.writeText(text) } }
-                    prefs.edit().putString(PREF_LAST_NAME, name).apply()
-                    savePlan(_state.value.settings)
+                    withContext(Dispatchers.IO) { runCatching { store.lastTrack.writeText(text) } }
+                    store.lastName = name
+                    store.save(_state.value.settings)
                 }
                 _state.update { it.copy(route = RouteInfo(name, sampled, loaded.missing.size), phase = Phase.Ready) }
                 analyse(withSweep = true)
                 loadClouds()
             } catch (e: RouteException) {
-                _state.update { it.copy(phase = Phase.Failed(e.message ?: "Invalid route")) }
+                fail(
+                    when (e.reason) {
+                        RouteException.Reason.NOT_GPX -> LoadProblem.NOT_GPX
+                        RouteException.Reason.NO_POINTS -> LoadProblem.NO_POINTS
+                        RouteException.Reason.BAD_COORDINATES -> LoadProblem.BAD_COORDINATES
+                        RouteException.Reason.TOO_SHORT -> LoadProblem.TOO_SHORT
+                        RouteException.Reason.TOO_LONG -> LoadProblem.TOO_LONG
+                    },
+                )
             } catch (e: OutOfMemoryError) {
-                _state.update { it.copy(phase = Phase.Failed("This route needs too much terrain data. Try a shorter section.")) }
+                fail(LoadProblem.TOO_LARGE)
             }
         }
     }
 
+    private fun fail(problem: LoadProblem) = _state.update { it.copy(phase = Phase.Failed(problem)) }
+
     fun update(settings: Settings) {
         val old = _state.value.settings
-        _state.update { it.copy(settings = settings, osmandMessage = null) }
-        savePlan(settings)
+        _state.update { it.copy(settings = settings, osmandProblem = null) }
+        store.save(settings)
         val dayChanged = settings.date != old.date || settings.zone != old.zone
         analyse(withSweep = dayChanged || settings.paceFactor != old.paceFactor || settings.breaks != old.breaks)
     }
@@ -230,45 +244,18 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         update(s.copy(breaks = s.breaks - b))
     }
 
-    /** The plan for the last track, so it comes back with it. */
-    private fun savePlan(s: Settings) {
-        prefs.edit()
-            .putString(PREF_PLAN_DATE, s.date.toString())
-            .putString(PREF_PLAN_START, s.start.toString())
-            .putString(PREF_PLAN_ZONE, s.zone.id)
-            .putFloat(PREF_PLAN_PACE, s.paceFactor.toFloat())
-            .putString(PREF_PLAN_BREAKS, s.breaks.joinToString(";") { "${it.distance}:${it.minutes}" })
-            .apply()
-    }
-
-    /** The saved plan; a date in the past becomes today. */
-    private fun savedPlan(): Settings? = runCatching {
-        val zone = ZoneId.of(prefs.getString(PREF_PLAN_ZONE, null))
-        val today = LocalDate.now(zone)
-        Settings(
-            date = LocalDate.parse(prefs.getString(PREF_PLAN_DATE, null)).let { if (it < today) today else it },
-            start = LocalTime.parse(prefs.getString(PREF_PLAN_START, null)),
-            zone = zone,
-            paceFactor = (prefs.getFloat(PREF_PLAN_PACE, 1f) * 20).roundToInt() / 20.0,
-            breaks = prefs.getString(PREF_PLAN_BREAKS, "")!!.split(';').filter { it.isNotBlank() }.map {
-                val (d, m) = it.split(':')
-                PlannedBreak(d.toDouble(), m.toInt())
-            },
-        )
-    }.getOrNull()
-
     /** Whether the user has been told, once, what turning Clouds on sends where. */
-    val cloudsExplained: Boolean get() = prefs.getBoolean(PREF_CLOUDS_EXPLAINED, false)
+    val cloudsExplained: Boolean get() = store.cloudsExplained
 
     /** Clouds on after the explanation was accepted. */
     fun acceptClouds() {
-        prefs.edit().putBoolean(PREF_CLOUDS_EXPLAINED, true).apply()
+        store.cloudsExplained = true
         setClouds(true)
     }
 
     /** The Clouds switch. Off drops any forecast; on loads it for the route. */
     fun setClouds(enabled: Boolean) {
-        prefs.edit().putBoolean(PREF_CLOUDS, enabled).apply()
+        store.cloudsEnabled = enabled
         if (enabled == _state.value.cloudsEnabled) return
         _state.update { it.copy(cloudsEnabled = enabled) }
         if (enabled) {
@@ -276,14 +263,14 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             weatherJob?.cancel()
             val had = _state.value.weather is WeatherState.Ready
-            _state.update { it.copy(weather = WeatherState.Idle, sky = null, days = null) }
+            _state.update { it.copy(weather = WeatherState.Idle, refreshProblem = null, sky = null, days = null) }
             if (had) analyse(withSweep = true)
         }
     }
 
     /**
      * The cloud forecast for the whole forecast period, while Clouds is on. A forecast for the same
-     * route younger than [FORECAST_MAX_AGE] is reused (from memory or disk), so switching Clouds
+     * route younger than [WeatherClient.MAX_AGE] is reused (from memory or disk), so switching Clouds
      * off and on, or reopening the app, does not fetch again; [force] fetches anyway (Refresh).
      * Fetching is the only time the app sends route points to the weather service.
      */
@@ -292,10 +279,11 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         val route = _state.value.route?.sampled ?: return
         val current = _state.value.weather
         if (current is WeatherState.Loading) return
-        if (!force && current is WeatherState.Ready && System.currentTimeMillis() - current.fetchedAt < FORECAST_MAX_AGE) return
-        val maxAge = if (force) 0L else FORECAST_MAX_AGE
+        if (!force && current is WeatherState.Ready && weatherClient.isFresh(current.fetchedAt)) return
+        val maxAge = if (force) 0L else WeatherClient.MAX_AGE
+        val places = OpenMeteo.places(route)
         weatherJob?.cancel()
-        weatherClient.cached(route, maxAge)?.let { f ->
+        weatherClient.cached(places, maxAge)?.let { f ->
             _state.update { it.copy(weather = WeatherState.Ready(f.forecast, f.fetchedAt)) }
             analyse(withSweep = true)
             return
@@ -303,12 +291,17 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(weather = WeatherState.Loading) }
         weatherJob = viewModelScope.launch {
             val weather = try {
-                weatherClient.fetch(route, maxAge).let { WeatherState.Ready(it.forecast, it.fetchedAt) }
-            } catch (e: WeatherException) {
-                WeatherState.Unavailable(e.message ?: "No forecast.")
+                weatherClient.fetch(places, maxAge).let { WeatherState.Ready(it.forecast, it.fetchedAt) }
+            } catch (e: ForecastException) {
+                // A failed refresh keeps the forecast there is; the Clouds ⓘ says it could not be renewed.
+                if (current is WeatherState.Ready) {
+                    if (_state.value.route?.sampled === route) _state.update { it.copy(weather = current, refreshProblem = e) }
+                    return@launch
+                }
+                WeatherState.Unavailable(e)
             }
             if (_state.value.route?.sampled !== route) return@launch
-            _state.update { it.copy(weather = weather) }
+            _state.update { it.copy(weather = weather, refreshProblem = null) }
             if (weather is WeatherState.Ready) analyse(withSweep = true)
         }
     }
@@ -320,7 +313,7 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         if (withSweep) _state.update { it.copy(sweep = null) }
         val weather = _state.value.weather
         // An old forecast is replaced; the new one triggers another analysis.
-        if (weather is WeatherState.Ready && System.currentTimeMillis() - weather.fetchedAt >= FORECAST_MAX_AGE) loadClouds(force = true)
+        if (weather is WeatherState.Ready && !weatherClient.isFresh(weather.fetchedAt)) loadClouds(force = true)
         val forecast = (weather as? WeatherState.Ready)?.forecast
         val skyAt = forecast?.let { SkyModel.skyAt(it, a.route) }
         analysisJob = viewModelScope.launch {
@@ -402,9 +395,10 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
         val result = state.result ?: return
         val route = state.route ?: return
         viewModelScope.launch {
-            val files = withContext(Dispatchers.Default) { OsmAndExport.files(result, route.name, ::localTime) }
+            val labels = Words(getApplication<Application>().resources).export
+            val files = withContext(Dispatchers.Default) { OsmAndExport.files(result, route.name, labels, ::localTime) }
             val view = mapViewFor(route.sampled)
-            val message = when (osmand.show(files, view)) {
+            val problem = when (osmand.show(files, view)) {
                 OsmAndBridge.Outcome.SHOWN -> {
                     osmand.launchIntent()?.let { getApplication<Application>().startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     // If OsmAnd was not running, the first map move went nowhere.
@@ -414,19 +408,19 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     null
                 }
-                OsmAndBridge.Outcome.NOT_INSTALLED -> "OsmAnd is not installed."
-                OsmAndBridge.Outcome.NOT_CONNECTED -> "Could not connect to OsmAnd. Open OsmAnd once, then try again."
+                OsmAndBridge.Outcome.NOT_INSTALLED -> OsmAndProblem.NOT_INSTALLED
+                OsmAndBridge.Outcome.NOT_CONNECTED -> OsmAndProblem.NOT_CONNECTED
                 OsmAndBridge.Outcome.NOT_ALLOWED -> {
                     val intent = osmand.permissionRequestIntent()
                     if (intent != null) {
                         onNeedsPermission(intent)
-                        "Allow Ridge Light to show tracks in OsmAnd, then tap the button again."
+                        OsmAndProblem.ASK_PERMISSION
                     } else {
-                        "OsmAnd refused. Enable Ridge Light under OsmAnd → Plugins → Connected apps, then try again."
+                        OsmAndProblem.REFUSED
                     }
                 }
             }
-            _state.update { it.copy(osmandMessage = message) }
+            _state.update { it.copy(osmandProblem = problem) }
         }
     }
 
@@ -458,13 +452,3 @@ class RidgeLightViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 private const val TAG = "RidgeLight"
-private const val PREF_CLOUDS = "clouds"
-private const val PREF_LAST_NAME = "last_name"
-private const val PREF_PLAN_DATE = "plan_date"
-private const val PREF_PLAN_START = "plan_start"
-private const val PREF_PLAN_ZONE = "plan_zone"
-private const val PREF_PLAN_PACE = "plan_pace"
-private const val PREF_PLAN_BREAKS = "plan_breaks"
-private const val PREF_CLOUDS_EXPLAINED = "clouds_explained"
-/** Forecast models are rerun every few hours; a younger forecast is not fetched again. */
-private const val FORECAST_MAX_AGE = 3 * 3_600_000L

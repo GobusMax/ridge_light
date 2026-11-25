@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -21,6 +22,16 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -28,6 +39,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import net.ridgelight.app.R
 import net.ridgelight.core.analysis.SunResult
 import net.ridgelight.core.weather.CloudColumn
 import net.ridgelight.core.weather.SkyLight
@@ -35,16 +47,14 @@ import net.ridgelight.core.weather.SkyModel
 import net.ridgelight.core.weather.SkyReport
 import java.time.Instant
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 /** Horizontal bar split into [segments] (colour, amount), in order. */
 @Composable
-fun SegmentBar(segments: List<Pair<Color, Double>>, modifier: Modifier = Modifier.fillMaxWidth().height(10.dp)) {
+fun SegmentBar(segments: List<Pair<Color, Double>>, modifier: Modifier) {
     val total = segments.sumOf { it.second }
     val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)
     Canvas(modifier) {
@@ -97,7 +107,6 @@ fun MiniColumns(
     }
 }
 
-private val LEFT = 44.dp
 private val RIGHT = 4.dp
 private val TOP = 6.dp
 private val BAR = 10.dp
@@ -114,7 +123,11 @@ private val SNAP = 10.dp
  * same with and without clouds.
  *
  * Tapping or dragging anywhere picks the moment the hiker passes that point ([onScrub], seconds
- * after departure); near a break it snaps to the break. [highlight] shades a part of the route.
+ * after departure); near a break it snaps to the break.
+ *
+ * For screen readers it is an adjustable control: [description] says what it shows, [position]
+ * where the cursor is; swiping moves the cursor in steps of 5 % of the hike, and [actions] jump
+ * to the next change of light and similar.
  */
 @Composable
 fun ProfileChart(
@@ -124,15 +137,17 @@ fun ProfileChart(
     cursorSeconds: Double,
     onScrub: (Double) -> Unit,
     modifier: Modifier = Modifier,
-    highlight: ClosedFloatingPointRange<Double>? = null,
     hint: String? = null,
     cloudsNote: String? = null,
+    description: String = "",
+    position: String = "",
+    actions: List<CustomAccessibilityAction> = emptyList(),
 ) {
+    val w = words
     val measurer = rememberTextMeasurer()
     val axis = MaterialTheme.colorScheme.onSurfaceVariant
     val cursorColor = MaterialTheme.colorScheme.onSurface
     val cursorFill = MaterialTheme.colorScheme.surface
-    val highlightColor = MaterialTheme.colorScheme.primary
     val cloudColor = MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
     val nodes = result.route.nodes
@@ -142,11 +157,28 @@ fun ProfileChart(
     val maxE = max(elevations.max(), minE + 50)
     val length = result.route.length
     val profileHeight = 150.dp
-    val bars = BAR_GAP * 2 + BAR * 2 + BAR_GAP
     val scrub by rememberUpdatedState(onScrub)
+    val terrainLabel = stringResource(R.string.terrain)
+    val cloudsLabel = stringResource(R.string.clouds)
+    val maxLabel = w.metres(maxE)
+    val minLabel = w.metres(minE)
+    // The left margin holds the bar names and heights: as wide as the longest, in this language and font size.
+    val density = LocalDensity.current
+    val leftPx = remember(terrainLabel, cloudsLabel, maxLabel, minLabel, density) {
+        val widest = listOf(terrainLabel to BAR_LABEL, cloudsLabel to BAR_LABEL, maxLabel to AXIS_LABEL, minLabel to AXIS_LABEL)
+            .maxOf { (text, size) -> measurer.measure(text, TextStyle(fontSize = size)).size.width }
+        widest + with(density) { 6.dp.toPx() }
+    }
+    // Rows for the bars and the hour axis: as tall as their labels, which grow with the font size.
+    val (barPitch, axisHeight) = remember(terrainLabel, density) {
+        val label = with(density) { measurer.measure(terrainLabel, TextStyle(fontSize = BAR_LABEL)).size.height.toDp() }
+        val tick = with(density) { measurer.measure("00:00", TextStyle(fontSize = TICK_LABEL)).size.height.toDp() }
+        maxOf(BAR + BAR_GAP, label) to maxOf(AXIS, tick + 6.dp)
+    }
+    val bars = BAR_GAP * 2 + barPitch + BAR
 
     val input = Modifier.scrubbing(result) { x, width ->
-        val left = LEFT.toPx()
+        val left = leftPx
         val right = width - RIGHT.toPx()
         fun xOf(d: Double) = left + (right - left) * (d / length).toFloat()
         val near = result.breaks.minByOrNull { abs(xOf(it.distance) - x) }?.takeIf { abs(xOf(it.distance) - x) <= SNAP.toPx() }
@@ -154,25 +186,28 @@ fun ProfileChart(
         scrub(seconds)
     }
 
-    Canvas(modifier.fillMaxWidth().height(TOP + profileHeight + bars + AXIS).then(input)) {
-        val left = LEFT.toPx()
+    val semantics = Modifier.semantics {
+        contentDescription = description
+        stateDescription = position
+        progressBarRangeInfo = ProgressBarRangeInfo(cursorSeconds.toFloat(), 0f..result.duration.toFloat())
+        setProgress { value -> scrub(value.toDouble().coerceIn(0.0, result.duration)); true }
+        customActions = actions
+    }
+    Canvas(modifier.fillMaxWidth().height(TOP + profileHeight + bars + axisHeight).then(semantics).then(input)) {
+        val left = leftPx
         val right = size.width - RIGHT.toPx()
         val top = TOP.toPx()
         val bottom = top + profileHeight.toPx()
         fun x(d: Double) = left + (right - left) * (d / length).toFloat()
         fun y(e: Double) = bottom - (bottom - top) * ((e - minE) / (maxE - minE)).toFloat()
         val terrainTop = bottom + BAR_GAP.toPx() * 2
-        val cloudsTop = terrainTop + BAR.toPx() + BAR_GAP.toPx()
+        val cloudsTop = terrainTop + barPitch.toPx()
         val barsBottom = cloudsTop + BAR.toPx()
         val steps = result.route.steps
 
         sky?.let { drawClouds(it.columns, cloudColor, minE, maxE, left, right, top, bottom, ::x) }
-        highlight?.let { h ->
-            val x0 = x(h.start)
-            drawRect(highlightColor.copy(alpha = 0.14f), Offset(x0, top), Size(max(2f, x(h.endInclusive) - x0), barsBottom - top))
-        }
-        label(measurer, "${maxE.roundToInt()} m", Offset(0f, top), axis)
-        label(measurer, "${minE.roundToInt()} m", Offset(0f, bottom - 14.sp.toPx()), axis)
+        label(measurer, maxLabel, Offset(0f, top), axis)
+        label(measurer, minLabel, Offset(0f, bottom - 14.sp.toPx()), axis)
         hint?.let { label(measurer, it, Offset(left + 6.dp.toPx(), top), axis.copy(alpha = 0.8f)) }
 
         for ((i, step) in steps.withIndex()) {
@@ -203,10 +238,10 @@ fun ProfileChart(
             val alpha = sky?.let { skyAlpha(it.stepSky[i].sky) } ?: 0f
             if (alpha > 0f) drawRect(cloudColor.copy(alpha = alpha), Offset(x0, cloudsTop), Size(w, barHeight))
         }
-        barLabel(measurer, "Terrain", terrainTop + barHeight / 2, axis)
-        barLabel(measurer, "Clouds", cloudsTop + barHeight / 2, if (sky != null) axis else axis.copy(alpha = 0.5f))
+        barLabel(measurer, terrainLabel, terrainTop + barHeight / 2, axis)
+        barLabel(measurer, cloudsLabel, cloudsTop + barHeight / 2, axis)
         if (sky == null && cloudsNote != null) {
-            val layout = measurer.measure(cloudsNote, TextStyle(fontSize = 9.sp, color = axis.copy(alpha = 0.8f)))
+            val layout = measurer.measure(cloudsNote, TextStyle(fontSize = 9.sp, color = axis))
             drawText(layout, topLeft = Offset((left + right - layout.size.width) / 2, cloudsTop + (barHeight - layout.size.height) / 2))
         }
 
@@ -225,7 +260,7 @@ fun ProfileChart(
 
         // Full hours, where the hiker is then.
         val tickTop = barsBottom + 2.dp.toPx()
-        val clock = DateTimeFormatter.ofPattern("HH:mm")
+        val clock = w.clock
         var hour = Instant.ofEpochMilli(result.departureUtc).atZone(zone).truncatedTo(ChronoUnit.HOURS).plusHours(1)
         val arrival = result.timeAt(result.duration)
         var lastLabelEnd = Float.NEGATIVE_INFINITY
@@ -234,10 +269,10 @@ fun ProfileChart(
             val hx = x(result.momentAt(seconds).distance)
             drawLine(axis.copy(alpha = 0.6f), Offset(hx, tickTop), Offset(hx, tickTop + 4.dp.toPx()), 1.dp.toPx())
             val text = hour.format(clock)
-            val w = measurer.measure(text, TextStyle(fontSize = 10.sp)).size.width
+            val w = measurer.measure(text, TextStyle(fontSize = TICK_LABEL)).size.width
             val lx = (hx - w / 2).coerceIn(left - 8.dp.toPx(), size.width - w)
             if (lx > lastLabelEnd + 4.dp.toPx()) {
-                drawText(measurer, text, Offset(lx, tickTop + 4.dp.toPx()), TextStyle(fontSize = 10.sp, color = axis))
+                drawText(measurer, text, Offset(lx, tickTop + 4.dp.toPx()), TextStyle(fontSize = TICK_LABEL, color = axis))
                 lastLabelEnd = lx + w
             }
             hour = hour.plusHours(1)
@@ -303,12 +338,16 @@ private fun DrawScope.drawClouds(
     }
 }
 
+private val AXIS_LABEL = 11.sp
+private val BAR_LABEL = 10.sp
+private val TICK_LABEL = 10.sp
+
 private fun DrawScope.label(m: TextMeasurer, text: String, at: Offset, color: Color) {
-    drawText(m, text, at, TextStyle(fontSize = 11.sp, color = color))
+    drawText(m, text, at, TextStyle(fontSize = AXIS_LABEL, color = color))
 }
 
 /** A bar's name in the left margin, centred on [centreY]. */
 private fun DrawScope.barLabel(m: TextMeasurer, text: String, centreY: Float, color: Color) {
-    val layout = m.measure(text, TextStyle(fontSize = 10.sp, color = color))
+    val layout = m.measure(text, TextStyle(fontSize = BAR_LABEL, color = color))
     drawText(layout, topLeft = Offset(0f, centreY - layout.size.height / 2))
 }

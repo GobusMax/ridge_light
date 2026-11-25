@@ -29,10 +29,10 @@ object GpxReader {
     private val metaNameRe = Regex("<${NS}metadata\\b[^>]*>[\\s\\S]*?<${NS}name\\b[^>]*>([^<]*)<")
 
     fun read(xml: String): GpxTrack {
-        if (!Regex("<${NS}gpx\\b").containsMatchIn(xml)) throw RouteException("This is not a GPX file.")
+        if (!Regex("<${NS}gpx\\b").containsMatchIn(xml)) throw RouteException(RouteException.Reason.NOT_GPX, "This is not a GPX file.")
         val segments = trksegRe.findAll(xml).map { points(it.groupValues[1], trkptRe) }.filter { it.isNotEmpty() }.toList()
             .ifEmpty { rteRe.findAll(xml).map { points(it.groupValues[1], rteptRe) }.filter { it.isNotEmpty() }.toList() }
-        if (segments.isEmpty()) throw RouteException("No track or route points found. Waypoints alone do not make a route.")
+        if (segments.isEmpty()) throw RouteException(RouteException.Reason.NO_POINTS, "No track or route points found. Waypoints alone do not make a route.")
         val name = (trkNameRe.find(xml) ?: metaNameRe.find(xml))?.groupValues?.get(1)?.let(::unescape)?.trim()?.ifEmpty { null }
         return GpxTrack(name, segments)
     }

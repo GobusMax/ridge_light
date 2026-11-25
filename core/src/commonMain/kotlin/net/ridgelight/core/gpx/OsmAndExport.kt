@@ -31,6 +31,31 @@ object LightStyle {
 }
 
 /**
+ * The words in the tracks and waypoints sent to OsmAnd. English by default; an app overrides them
+ * for the phone's language.
+ */
+interface ExportLabels {
+    fun light(light: Light): String = LightStyle.label(light)
+    fun duration(seconds: Double): String = LightStyle.duration(seconds)
+    fun track(routeName: String, light: Light): String = "$routeName · ${light(light)}"
+
+    /** Waypoint name where [light] begins at [time]. */
+    fun change(light: Light, time: String): String = when (light) {
+        Light.SUN -> "Sun from $time"
+        Light.TERRAIN_SHADE -> "Shade from $time"
+        Light.BELOW_HORIZON -> "Sun down $time"
+        Light.UNKNOWN -> "Unknown from $time"
+    }
+
+    /** Waypoint description: [light] lasts [walkingSeconds] of walking. */
+    fun changeDetail(light: Light, walkingSeconds: Double): String = "${light(light)} for ${duration(walkingSeconds)} of walking"
+
+    fun breakName(from: String, to: String): String = "Break $from–$to"
+
+    object English : ExportLabels
+}
+
+/**
  * Turns a result into GPX files for OsmAnd. OsmAnd colours whole files, so each kind of light
  * gets its own file; the sun file also carries waypoints where the light changes.
  */
@@ -39,16 +64,16 @@ object OsmAndExport {
 
     fun fileName(light: Light) = "ridgelight-${light.name.lowercase().replace('_', '-')}.gpx"
 
-    /** @param localTime formats a UTC instant as local clock time, e.g. "10:42". */
-    fun files(result: SunResult, routeName: String, localTime: (Long) -> String): List<File> {
-        val waypoints = transitions(result, localTime)
+    /** @param localTime formats a UTC instant as local clock time, e.g. "10:42"; [labels] word the names. */
+    fun files(result: SunResult, routeName: String, labels: ExportLabels = ExportLabels.English, localTime: (Long) -> String): List<File> {
+        val waypoints = transitions(result, labels, localTime)
         return Light.entries.filter { light -> result.runs.any { it.light == light } }.map { light ->
             File(
                 light,
                 fileName(light),
                 LightStyle.color(light),
                 GpxWriter.lightTrack(
-                    result, light, "$routeName · ${LightStyle.label(light)}", LightStyle.color(light),
+                    result, light, labels.track(routeName, light), LightStyle.color(light),
                     if (light == Light.SUN) waypoints else emptyList(),
                 ),
             )
@@ -56,21 +81,15 @@ object OsmAndExport {
     }
 
     /** Waypoints where the light changes along the walk, plus one per break. */
-    fun transitions(result: SunResult, localTime: (Long) -> String): List<GpxWaypoint> {
+    fun transitions(result: SunResult, labels: ExportLabels = ExportLabels.English, localTime: (Long) -> String): List<GpxWaypoint> {
         val changes = result.runs.zipWithNext().filter { (a, b) -> a.light != b.light }.map { (_, run) ->
-            val verb = when (run.light) {
-                Light.SUN -> "Sun from"
-                Light.TERRAIN_SHADE -> "Shade from"
-                Light.BELOW_HORIZON -> "Sun down"
-                Light.UNKNOWN -> "Unknown from"
-            }
             // Until the light changes again, which may be after a break.
             val next = result.runs.firstOrNull { it.startSeconds > run.startSeconds && it.light != run.light }
             val walked = result.runs.filter { it.startSeconds >= run.startSeconds && (next == null || it.startSeconds < next.startSeconds) }
             GpxWaypoint(
                 result.route.steps[run.firstStep].start.position,
-                "$verb ${localTime(result.timeAt(run.startSeconds))}",
-                "${LightStyle.label(run.light)} for ${LightStyle.duration(walked.sumOf { it.seconds })} of walking",
+                labels.change(run.light, localTime(result.timeAt(run.startSeconds))),
+                labels.changeDetail(run.light, walked.sumOf { it.seconds }),
                 LightStyle.color(run.light),
             )
         }
@@ -79,8 +98,8 @@ object OsmAndExport {
             val main = byLight.maxBy { it.value }.key
             GpxWaypoint(
                 result.route.nodes[b.stop.node].position,
-                "Break ${localTime(result.timeAt(b.stop.startSeconds))}–${localTime(result.timeAt(b.stop.endSeconds))}",
-                byLight.entries.sortedByDescending { it.value }.joinToString(", ") { "${LightStyle.label(it.key)} ${LightStyle.duration(it.value)}" },
+                labels.breakName(localTime(result.timeAt(b.stop.startSeconds)), localTime(result.timeAt(b.stop.endSeconds))),
+                byLight.entries.sortedByDescending { it.value }.joinToString(", ") { "${labels.light(it.key)} ${labels.duration(it.value)}" },
                 LightStyle.color(main),
             )
         }

@@ -22,6 +22,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -30,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import net.ridgelight.app.R
 import kotlin.math.max
 
 /**
@@ -44,9 +50,14 @@ fun InfoButton(title: String?, modifier: Modifier = Modifier, content: @Composab
     Box(modifier) {
         IconButton(
             onClick = { if (SystemClock.uptimeMillis() - closedAt > 300) open = !open },
-            modifier = Modifier.size(32.dp),
+            modifier = Modifier.compactTouchTarget(32.dp),
         ) {
-            Icon(AppIcons.Info, "Explain", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                AppIcons.Info,
+                title?.let { stringResource(R.string.explain_topic, it) } ?: stringResource(R.string.explain),
+                Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         if (open) {
             InfoPopup(title, {
@@ -74,6 +85,20 @@ fun InfoPopup(title: String?, dismiss: () -> Unit, content: @Composable ColumnSc
         }
     }
 }
+
+/**
+ * Takes only [room] in the layout, as the design wants, but is a full 48 dp for fingers and screen
+ * readers, reaching a little over its neighbours.
+ */
+private fun Modifier.compactTouchTarget(room: Dp): Modifier = layout { measurable, _ ->
+    val full = 48.dp.roundToPx()
+    val size = room.roundToPx()
+    val placeable = measurable.measure(Constraints.fixed(full, full))
+    layout(size, size) { placeable.place((size - full) / 2, (size - full) / 2) }
+}
+
+/** Hidden from screen readers, because something around it already says it. */
+fun Modifier.hiddenFromReaders(): Modifier = clearAndSetSemantics {}
 
 /** Text in an info popup. */
 @Composable

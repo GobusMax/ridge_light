@@ -39,6 +39,7 @@ low fog less reliably than other cloud.
 | `companion-app/` | Android app (Compose). Opens a GPX (OsmAnd → track → Share → Ridge Light), shows the analysis and pushes coloured tracks back into OsmAnd over AIDL. |
 | `tools/webapp-reference.mjs` | Runs the original web prototype's model headless in Node, for comparison. |
 | `Ridge Light/` | The original web prototype (reference only; its Rigi GPX and DEM tiles are used as test fixtures). |
+| `fastlane/` | Store texts, icon and screenshots (English and German), in the layout F-Droid reads. |
 
 A built-in OsmAnd plugin (the same analysis inside OsmAnd itself, kept as patches against an
 OsmAnd checkout) was built as well. It is paused and lives on the `builtin-plugin` branch.
@@ -50,14 +51,22 @@ Gradle 9.8 needs Java 17+, but this machine's default `java` is 8, so set `JAVA_
 ```sh
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 ./gradlew :core:jvmTest                        # engine unit tests
+./gradlew :companion-app:testDebugUnitTest     # app unit tests (saved plan, forecast cache, pace presets)
+./gradlew :companion-app:lintRelease           # Android lint
 ./gradlew :cli:installDist                     # CLI -> cli/build/install/ridgelight/bin/ridgelight
 ./gradlew :companion-app:assembleRelease       # APK for phones -> companion-app/build/outputs/apk/release/
 ./gradlew :companion-app:assembleDebug         # APK -> companion-app/build/outputs/apk/debug/
 ```
 
-Put the release APK on phones. It is shrunk with R8 and signed with the local debug key, so it
-installs over a debug build. The debug build runs the analysis 3–5× slower, because Android
-deoptimises debuggable apps.
+Put the release APK on phones. It is shrunk with R8. The debug build runs the analysis 3–5×
+slower, because Android deoptimises debuggable apps.
+
+**Release signing.** Release builds are signed with the key described in a properties file
+outside the repository: `~/.android/ridgelight-release.properties` by default, or the path in the
+Gradle property `ridgelight.signing` (`-Pridgelight.signing=…`). It holds `storeFile`,
+`storePassword`, `keyAlias` and `keyPassword`. Without it, release builds fall back to the debug
+key, with a warning, so anyone can build. The key and its properties are never committed; every
+update of the published app must be signed with the same key.
 
 The Android modules need `local.properties` with `sdk.dir=…` and compile against SDK 36.
 
@@ -120,6 +129,17 @@ The ⋮ menu has the time zone and **About** (how it works, limits, privacy, dat
   the light changes and at breaks. They go to OsmAnd's `tracks/ridgelight-*.gpx` and are
   replaced on each run.
 
+**Languages.** English and German; the app follows the phone's language, and on Android 13+ it
+can be set per app (Settings → Apps → Ridge Light → Language). All text, including the names of
+the tracks and waypoints sent to OsmAnd, is in `companion-app/src/main/res/values*/strings.xml`.
+
+**Accessibility.** Every control has a label for screen readers, durations are read as words
+("2 hours 40 minutes"), and the profile is an adjustable control, like a slider: it moves in
+steps of 5 % of the hike, says where the cursor is, and has actions that jump to the next change
+of light or break. Text
+reaches at least 4.5:1 contrast in light and dark mode, touch targets are at least 48 dp, and
+with large fonts the plan row becomes a 2×2 grid and lines wrap instead of being cut off.
+
 OsmAnd keeps newly connected apps disabled. The first time, enable Ridge Light under OsmAnd →
 Menu → Plugins (it is listed as a third-party app). Newer OsmAnd builds show a permission dialog
 instead. The app explains either case.
@@ -153,3 +173,12 @@ instead. The app explains either case.
 - **Weather:** [Open-Meteo](https://open-meteo.com) forecast API (free, no key, CC BY 4.0),
   using each region's best available models. Only the standard pressure levels are requested:
   "best match" fills the in-between ones from another model, which makes profiles zig-zag.
+
+## Licence
+
+Ridge Light is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. See [LICENSE](LICENSE).
+
+`osmand-aidl/` is a copy of OsmAnd's app-interface definitions, which OsmAnd offers for any use
+(see its README). The elevation and weather data keep their own terms (see Data above).

@@ -224,7 +224,7 @@ private fun sweep(analyzer: SunAnalyzer, schedule: net.ridgelight.core.pace.Sche
 
 private fun writeGpx(dir: Path, result: SunResult, name: String, local: (Long) -> String) {
     Files.createDirectories(dir)
-    for (f in OsmAndExport.files(result, name, local)) {
+    for (f in OsmAndExport.files(result, name, localTime = local)) {
         val file = dir.resolve(f.fileName)
         Files.writeString(file, f.gpx)
         println("  wrote $file")
